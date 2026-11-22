@@ -8,7 +8,7 @@ tasks below in order, updating this file as you go.
 
 ## 0. Current state: read this first after a context reset
 
-**Last updated:** 2026-11-22. Tasks 0 to 5 are finished or parked; **next is Task 6** (recording).
+**Last updated:** 2026-11-22. Tasks 1 to 6 are done, Task 0 parked; **next is Task 7** (laptop-mic bridge). Provider research is in `docs/research-cpaas-exotel-vs-plivo.md` (recommends Plivo if the business has a GST/Udyam/incorporation document, else Exotel); the owner still has to choose. Git is now a single branch, `main`.
 
 **Direction change:** the phone path is now a **CPaaS** (Exotel or Plivo), not the Bluetooth
 bridge. Task 0 is parked after two failed attempts on the spare laptop (the phone keeps
@@ -56,10 +56,7 @@ only run on SQLite); Docker; Railway; the bridge app (`local/bridge/` is an empt
 - The `.env` also contains unused keys from another project (`ACTIVE_MODEL`, `TTS_SPEED`,
   `PYTHONDONTWRITEBYTECODE`); settings ignore them.
 
-**Suggested next steps:** (1) Task 6: record both sides with Pipecat's `AudioBufferProcessor`
-(`on_audio_data`; `OpenAIRealtimeLLMService` with `LLMContextAggregatorPair` keeps messages in
-the context, which can supply the transcript; for timestamps use transcription frames or
-aggregator events), storage interface, `purge-recordings` CLI; (2) Task 7 laptop-mic bridge so
+**Suggested next steps:** (1) Task 6 is done. (2) Task 7 laptop-mic bridge so
 the user can talk to the agent with a headset; (3) when the user picks a CPaaS, add
 `transports/<provider>/` and re-scope tasks 8, 9 and 12; (4) Task 10 language check needs the
 user listening; (5) ask the user about pushing.
@@ -125,8 +122,8 @@ Working rules:
 | 3 | Ticket/customer domain + admin REST API | DONE | Work | No |
 | 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | DONE | Work | No |
 | 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | DONE | Work | API key |
-| 6 | Recording: audio + transcript storage | TODO (**next**) | Work | No |
-| 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | TODO | Work | No |
+| 6 | Recording: audio + transcript storage | DONE | Work | No |
+| 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | TODO (**next**) | Work | No |
 | 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | TODO | Work, then **Spare** | Yes (testing) |
 | 9 | Outbound update calls (re-scope with CPaaS: provider API dials) | TODO | **Spare** | Yes (testing) |
 | 10 | Language check: English, Kannada, Hindi, Hinglish | TODO | Work (laptop mic) or **Spare** | Yes (listening) |
@@ -492,21 +489,32 @@ Result: 75 offline tests pass (prompts, every tool body, async wrappers, schemas
 
 ---
 
-### Task 6: Recording — `TODO`
+### Task 6: Recording — `DONE`
 
-- [ ] Record both sides with Pipecat's audio buffer processor; save a WAV per call
+- [x] Record both sides with Pipecat's audio buffer processor; save a WAV per call
       (stereo: left caller, right agent, if supported; otherwise mixed mono) under
       `RECORDINGS_DIR/<yyyy>/<mm>/<call_id>.wav`; store the path on the call row.
-- [ ] Transcript: collect user and assistant transcription events from the Realtime
+- [x] Transcript: collect user and assistant transcription events from the Realtime
       service into `calls.transcript` with timestamps.
-- [ ] Storage behind a small interface (`save(call_id, bytes) -> path`, `open(path)`) so
+- [x] Storage behind a small interface (`save(call_id, bytes) -> path`, `open(path)`) so
       an S3-compatible store can be added later; implement local only.
-- [ ] Retention: a CLI command `uv run carwash-voice purge-recordings` deleting audio
+- [x] Retention: a CLI command `uv run carwash-voice purge-recordings` deleting audio
       older than `RECORDING_RETENTION_DAYS`.
 
 Acceptance: a fake-provider test call produces a WAV and a transcript row.
 
-Result: _(fill in)_
+Result: done. `run_call` puts an `AudioBufferProcessor` after the transport output and saves a
+16 kHz stereo WAV (caller left, agent right) via `LocalRecordingStore` (`voice/recording.py`,
+interface `save/open/delete`) to `RECORDINGS_DIR/yyyy/mm/<call_id>.wav`; the relative path goes
+to `calls.audio_path`. Transcript turns come from the aggregators' `on_user_turn_message_added`
+and `on_assistant_turn_stopped` events into `CallHandle.transcript` (role, text, ISO time) and
+are saved by `finalize_call`. `uv run carwash-voice purge-recordings` removes audio older than
+`RECORDING_RETENTION_DAYS` and keeps transcripts. Surprises: Pipecat runs event handlers as
+tasks, and on a hang-up the cancel may not reach the recorder, so `run_call` flushes the
+recorder itself in `finally` (best effort, must never block finalising the call; a
+`CancelledError` there must be caught). Not verified live: the transcript from a real OpenAI
+call.
+
 
 ---
 

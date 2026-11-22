@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from loguru import logger
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.llm_response_universal import (
+    AssistantTurnStoppedMessage,
+    LLMContextAggregatorPair,
+    UserTurnMessageAddedMessage,
+)
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.services.openai.realtime import events
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
@@ -71,5 +75,14 @@ class OpenAIRealtimeProvider:
             tools=tool_schemas(call.direction),
         )
         aggregators = LLMContextAggregatorPair(context)
+
+        @aggregators.user().event_handler("on_user_turn_message_added")
+        async def _caller_said(_agg: object, message: UserTurnMessageAddedMessage) -> None:
+            handle.add_transcript("caller", message.content, message.timestamp)
+
+        @aggregators.assistant().event_handler("on_assistant_turn_stopped")
+        async def _agent_said(_agg: object, message: AssistantTurnStoppedMessage) -> None:
+            handle.add_transcript("agent", message.content, message.timestamp)
+
         logger.info("Realtime provider ready (model {})", s.openai_realtime_model)
         return [GreetOnConnect(), aggregators.user(), llm, watcher, aggregators.assistant()]

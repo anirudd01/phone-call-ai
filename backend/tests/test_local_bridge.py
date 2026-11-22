@@ -109,6 +109,10 @@ def test_happy_path_streams_wav_and_gets_audio_back(settings: Settings, wav_fixt
     assert row.end_reason == "operator_hangup"
     assert row.caller_number == "+919845012345"
     assert row.direction.value == "inbound"
+    assert row.transcript and row.transcript[0]["role"] == "caller"
+    assert row.audio_path and row.audio_path.endswith(f"{call_id}.wav")
+    with wave.open(str(Path(settings.recordings_dir) / row.audio_path)) as w:
+        assert w.getnchannels() == 2 and w.getframerate() == 16000 and w.getnframes() > 0
 
 
 def test_agent_end_call_sends_end_call_then_closes(settings: Settings, wav_fixture: Path) -> None:

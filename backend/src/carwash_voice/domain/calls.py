@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -72,3 +73,21 @@ def finalize_call(
 def list_calls(session: Session, limit: int = 50, offset: int = 0) -> list[Call]:
     query = select(Call).order_by(Call.started_at.desc()).limit(limit).offset(offset)
     return list(session.scalars(query))
+
+
+def purge_recordings(
+    session: Session, older_than_days: int, delete_file: Callable[[str], bool]
+) -> int:
+    """Delete audio of calls that ended more than older_than_days ago; keep transcripts.
+
+    Returns how many calls had their audio removed.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    query = select(Call).where(Call.audio_path.is_not(None), Call.ended_at < cutoff)
+    purged = 0
+    for call in session.scalars(query).all():
+        delete_file(call.audio_path)
+        call.audio_path = None
+        purged += 1
+    session.commit()
+    return purged

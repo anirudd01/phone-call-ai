@@ -15,10 +15,12 @@ class EchoProcessor(FrameProcessor):
         self._end_after = end_after_frames
         self._end_reason = end_reason
         self._seen = 0
+        self._handle.add_transcript("caller", "hello there")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if isinstance(frame, InputAudioRawFrame):
+            await self.push_frame(frame, direction)  # keep the caller audible to the recorder
             await self.push_frame(
                 OutputAudioRawFrame(
                     audio=frame.audio, sample_rate=frame.sample_rate, num_channels=1
