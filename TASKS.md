@@ -8,6 +8,12 @@ tasks below in order, updating this file as you go.
 
 ## 0. Current state: read this first after a context reset
 
+**Opus review 2026-11-22: read section 8 first.** Opus fixed the code findings (R1 to R7); the
+open items for you are R8 to R12 there. Tests are now 122 (backend) plus 12 (bridge).
+
+**Plivo account: pending on the user.** Plivo sign-up needs a work email; the user is setting up
+email on their domain `shyn.co.in` first. Until then nothing can be tried against real Plivo.
+
 **Last updated:** 2026-11-22 (paused by the user). Done: tasks 1 to 7. Coded and tested offline only: Plivo inbound transport, Plivo outbound dialling (task 9), Railway files (task 11). Parked: task 0 (Bluetooth). **Provider decided: Plivo** (the business has a Udyam registration). **Git: commit and push straight to `main`, no branches** (user rule until a server is running). Research: `docs/research-cpaas-exotel-vs-plivo.md`. Plivo guide: `docs/plivo-setup.md`. Railway guide: `docs/runbook-railway.md`.
 
 **Direction change:** the phone path is now a **CPaaS** (Exotel or Plivo), not the Bluetooth
@@ -25,7 +31,7 @@ transport and call `voice/session.py: run_call()`; `voice/` must not change.
 commit. Never commit `backend/.env` or `local/bridge/.env` (both git-ignored; real keys).
 
 **What works (all verified):**
-- Backend in `backend/` (Python 3.12, FastAPI, Pipecat 1.16.0, SQLAlchemy 2, Alembic). 104 offline
+- Backend in `backend/` (Python 3.12, FastAPI, Pipecat 1.16.0, SQLAlchemy 2, Alembic). 122 offline
   tests (backend) plus 12 (bridge), Ruff clean. Run tests: `cd backend; py -3.12 -m uv run pytest -q`. Lint:
   `py -3.12 -m uv run ruff check; py -3.12 -m uv run ruff format --check`.
 - Live test (spends a little money): `py -3.12 -m uv run pytest -m live -s`. Passed 3 of 3: the
@@ -108,11 +114,11 @@ Working rules:
    (line length 100, rules `E,F,W,I,UP,B,SIM,ASYNC`). Type hints everywhere.
 6. **Secrets:** never commit `.env`, keys or tokens. Provide `.env.example` with key names
    and safe placeholder values only. Never print secret values in logs or docs.
-7. **Git:** the **user sets up git and the GitHub repo**; don't run `git init` or create
-   the remote. **Ask the user before every commit and before pushing.** Branch model:
-   `main` (releases) and `develop` (integration); do work on `feature/<short-name>`
-   branches off `develop`. Never use a `chore/` branch. Write commit messages to a file and use `git commit -F <file>`.
-   Stage files by name (no `git add -A` / `git add .`).
+7. **Git:** the user set up git and the GitHub repo. **Current rule (user, 2026-11-22):
+   commit and push straight to `main`, no branches**, until a server is running; then the
+   user may switch to `develop` + `feature/<short-name>`. Never use a `chore/` branch. Write
+   commit messages to a file and use `git commit -F <file>`. Stage files by name (no
+   `git add -A` / `git add .`).
 8. **Keep it simple.** Prototype quality with production habits: clear structure,
    config via env vars, structured logs, tests for logic. No speculative abstractions
    beyond those named in this plan (the transport and AI-provider seams are deliberate).
@@ -149,7 +155,7 @@ Working rules:
 | Topic | Decision |
 |---|---|
 | Country / users | India. Customers call an Indian mobile SIM (SIM 2 of the user's Android phone). |
-| Phone → backend | Bluetooth hands-free bridge on the **spare Windows laptop**, using Windows' own Bluetooth hands-free audio devices. **No Windows Phone Link app**, ever. Run the bridge as plain Windows Python, not in Docker or WSL (containers can't reach the laptop's Bluetooth). If task 0 fails, stop and ask the user (see task 0). |
+| Phone → backend | **Superseded 2026-11-22: Plivo (see section 7).** Original decision: Bluetooth hands-free bridge on the **spare Windows laptop**, using Windows' own Bluetooth hands-free audio devices. **No Windows Phone Link app**, ever. Run the bridge as plain Windows Python, not in Docker or WSL (containers can't reach the laptop's Bluetooth). If task 0 fails, stop and ask the user (see task 0). |
 | Purpose of the bridge | **Local testing only**: to see that the phone flow works and get a feel for the agent. The real, long-term phone path is a CPaaS (phase 2). |
 | Code layout | Everything specific to the Bluetooth bridge lives in a top-level **`local/`** folder (bridge app, spike scripts, its docs), plus the backend's adapter for it in `backend/src/carwash_voice/transports/local/`. Nothing outside these two places may import from them, so they can be deleted later without touching the rest. The real call path (CPaaS transports, agent, tools, data) goes in the normal backend structure. |
 | Machines | Work laptop: coding, unit tests, laptop-mic mode. Spare laptop (admin + Docker): Bluetooth bridge and all phone tests; can also run the backend natively or in Docker. |
@@ -164,7 +170,7 @@ Working rules:
 | Storage per call | **Audio + transcript + ticket.** Agent announces recording at the start of each call. |
 | Persona | Config placeholders: `BUSINESS_NAME="Sparkle Car Wash"`, `AGENT_NAME="Asha"`. |
 | Hosting path | Laptop → Railway (pick an Asia region, e.g. Singapore, if available) → Railway + CPaaS; VPS if Railway is unsuitable. |
-| Out of scope now | Call summaries for human agents, notifications, Android companion app, CPaaS. |
+| Out of scope now | Call summaries for human agents, notifications, Android companion app. (CPaaS moved into scope on 2026-11-22: Plivo.) |
 
 ---
 
@@ -384,7 +390,7 @@ stick on the spare laptop and using the Linux Bluetooth stack (BlueZ with PipeWi
 oFono), which is a better-documented hands-free setup. Don't attempt Docker or WSL for
 Bluetooth: they need a custom Linux kernel and USB passthrough of the Bluetooth adapter.
 
-Result: scripts and instructions written and lint-clean in `local/spike/` (own `pyproject.toml`; `list_devices.py` runs on the work laptop). Waiting for the user to run them on the spare laptop and fill in the table in `local/docs/spike-bluetooth.md`.
+Result: scripts and instructions written and lint-clean in `local/spike/` (own `pyproject.toml`; `list_devices.py` runs on the work laptop). PARKED: the user ran them twice on the spare laptop; the phone kept dropping the Bluetooth link (see section 7). The phone path is now Plivo.
 
 ---
 
@@ -560,7 +566,7 @@ should follow `docs/runbook-local.md` and report echo, latency and audio quality
 
 ---
 
-### Task 8: Local end-to-end — `TODO`
+### Task 8: Local end-to-end — `MOSTLY DONE` (laptop-mic only; phone part replaced by Plivo, task 12)
 
 - [ ] Laptop mode on the work laptop: backend and bridge both on localhost, talk to the
       agent through a headset, create a ticket, check it via the admin API.
@@ -725,3 +731,29 @@ Result: _(fill in)_
   does not cut off the goodbye; the exact `Direction`/`From`/`To` form fields. Tests fake all of
   these from the documentation.
 - Tests: `backend/tests/test_plivo.py` (12). The hang-up call is mocked; never let tests reach Plivo.
+
+---
+
+## 8. Opus review (2026-11-22)
+
+Opus reviewed the code and this tracker at the pause point. Verified by Opus: 104 backend + 12
+bridge tests passed and Ruff was clean before the review; no `.env` or key-like strings are in
+git. R1 to R7 were fixed by Opus (uncommitted until the user approves); after the fixes: 114
+backend + 12 bridge tests pass, Ruff clean, the call tests passed three runs in a row.
+**Your work: R8 to R12, then keep R1, R3 and R4 in mind during the first live Plivo calls.**
+
+| # | Finding | Status |
+|---|---|---|
+| R1 | Plivo call context (direction, customer number, outbound job id) relied only on Plivo echoing `extraHeaders` in the media `start` event, which nothing verifies (Pipecat never parses it). If wrong, outbound calls would run with the inbound prompt and no job. | FIXED: `/plivo/answer` stores the context in memory keyed by `CallUUID` (`PendingCalls`, 5 min expiry); the socket looks it up by `start.callId` first and falls back to `extra_headers`. It logs `Plivo call details from: ...`. **Check that log line on the first real call**: it proves whether `callId` equals `CallUUID`. Memory store assumes one server process (true on Railway with one replica). |
+| R2 | An answered outbound call where the customer hangs up before the agent calls `complete_outbound_job` left the job `dialling` for ever (hang-up webhook ignores `completed`); redial gave 409 and only the bridge token could reset it. | FIXED: `run_call` marks a still-`dialling` job `failed` with a note when the call ends (`outbound.close_unfinished_job`, inside the same shielded unit as `finalize_call`, because cancellation skipped code after the first shielded await). New admin route `POST /api/outbound-jobs/{id}/status` lets staff re-queue. |
+| R3 | `end_call` flow: prompt says "say goodbye, then call end_call", the tool result said "Say a brief goodbye now", and Pipecat always asks the model for a new response after a tool result: likely a double goodbye, or 20 s of silence if the model stays quiet. | FIXED: `EndCallWatcher` now tracks `BotStarted/StoppedSpeakingFrame`. If the agent is speaking when armed, the call ends when that speech stops; if silent, it waits up to 5 s (`silence_secs`) for a goodbye to start, then ends when it stops; 20 s cap. Tool result now says "if you already said goodbye, say nothing more". **Still verify live** (task 5 note). |
+| R4 | Privacy (DPDP): any caller could hear any ticket's status and description by saying a 5-digit number, add notes or flag callbacks on it; `find_customer` by car registration revealed another customer's name and tickets; `upsert_customer` matched by registration overwrote that customer's phone with the caller's. | FIXED: ticket tools need the call to come from the customer's own number, or a matching `car_registration` as a second detail (new optional tool argument); a confirmed customer stays confirmed for the rest of the call. `find_customer` returns nothing unless confirmed. `upsert_customer` creates a separate customer instead of replacing a stored number. Prompt has a privacy rule. Known gap: a call with **no** caller number (local bridge) that upserts by registration can still rename that customer; acceptable for local testing. **Check live** that the agent asks for the registration naturally when a tool returns the privacy error. |
+| R5 | Bridge (local only): pressing `e` on an outbound call always posted `completed`, overwriting the agent's outcome. | FIXED: the bridge no longer sets a status; the backend handles unfinished jobs (R2). |
+| R6 | `POST /api/outbound-jobs/{id}/dial` did DB work on the event loop and two quick requests could both pass the "queued" check (double call). | FIXED: `outbound.claim_for_dialling` (one conditional UPDATE, `ConflictError` → 409); all DB work via `run_db`. |
+| R7 | The Plivo media socket's secret path segment would appear in uvicorn's WebSocket log lines on Railway. | FIXED: `RedactSecretPaths` filter on `uvicorn.error` / `uvicorn.access` replaces it with `/ws/plivo/***`. |
+| R8 | README is behind the Plivo switch: the diagram and roadmap still show Bluetooth as phase 1 and "Exotel or Plivo" as phase 2; layout says "planned"; no "Setup and run" section. | TODO (Sonnet, fold into task 13) |
+| R9 | `docs/decisions.md` (asked for in tasks 10 and 12) does not exist; the decisions live in section 7. Either create it or change tasks 10 and 12 to use section 7. | TODO (Sonnet) |
+| R10 | Section 6 has an empty "Pinned versions" row; tasks 9 and 11 checkboxes are unticked although their Result lines describe the code as done. Tick what is done, leave the live-test boxes open. | TODO (Sonnet) |
+| R11 | Small, optional: admin list endpoints accept any `limit` (cap at e.g. 500); `purge_recordings` skips calls that never got `ended_at`; no minimum length check on `PLIVO_WS_SECRET` (suggest >= 24 chars and say so in `docs/plivo-setup.md`). | TODO (Sonnet, low priority) |
+| R12 | Before the first live call, add these to the "Not yet verified" list and check them: the R1 log line, the goodbye timing (R3), the privacy prompt behaviour (R4), and that a hang-up mid-outbound marks the job failed (R2). | TODO (Sonnet) |
+| R13 | Second review (an independent Opus agent, on R1 to R7 only) found: (a) `upsert_customer` marked whatever record it matched as verified, so saying a victim's phone, or giving their registration on a call with no caller number, unlocked and overwrote their record; (b) `create_ticket` accepted any model-supplied `customer_id`; (c) the log filter broke uvicorn's access formatter (it unpacks 5 args); (d) staff could re-queue a still-dialling job (second live call); (e) `close_unfinished_job` read-then-wrote (race with the agent's outcome); (f) "not found" vs privacy error let callers probe which tickets and numbers exist. | FIXED by Opus: (a) the tool now only updates the caller's own record (confirmed in this call, or matching the caller's number); everything else is a new customer (`customers.create_customer` / `update_customer`; a said number already owned by someone is not attached); (b) only a confirmed id is used; (c) the filter keeps the args shape, with a test through `AccessFormatter`; (d) 409 unless `?force=true`; (e) conditional UPDATE; (f) one `PRIVACY_ERROR` for both. 8 new tests; 122 backend tests pass. |

@@ -190,3 +190,37 @@ def test_outbound_job_validation(session: Session) -> None:
         outbound.create_job(session, "hi")
     with pytest.raises(NotFoundError):
         outbound.get_job(session, 999)
+
+
+def test_claim_for_dialling_only_once(session: Session) -> None:
+    import pytest as _pytest
+
+    from carwash_voice.domain import customers as _customers
+    from carwash_voice.domain import outbound as _outbound
+    from carwash_voice.domain.errors import ConflictError
+
+    c = _customers.upsert_customer(session, name="Ravi", phone="9845012345")
+    job = _outbound.create_job(session, "Your car is ready", customer_id=c.id)
+    assert _outbound.claim_for_dialling(session, job.id).status.value == "dialling"
+    with _pytest.raises(ConflictError):
+        _outbound.claim_for_dialling(session, job.id)
+    assert _outbound.close_unfinished_job(session, job.id) is True
+    assert _outbound.get_job(session, job.id).status.value == "failed"
+    assert _outbound.close_unfinished_job(session, job.id) is False
+
+
+def test_close_unfinished_job_leaves_a_recorded_outcome_alone(session: Session) -> None:
+    """Review finding 5: the end-of-call cleanup must not overwrite the agent's outcome."""
+    from carwash_voice.domain import customers as _customers
+    from carwash_voice.domain import outbound as _outbound
+    from carwash_voice.domain import tickets as _tickets
+
+    c = _customers.upsert_customer(session, name="Ravi", phone="9845012345")
+    t = _tickets.create_ticket(session, c.id, "billing", "refund")
+    job = _outbound.create_job(session, "Refund approved", ticket_ref=t.public_ref)
+    _outbound.claim_for_dialling(session, job.id)
+    _outbound.set_job_status(session, job.id, "completed", "happy")
+    assert _outbound.close_unfinished_job(session, job.id) is False
+    assert _outbound.get_job(session, job.id).status.value == "completed"
+    session.refresh(t)
+    assert not any("failed" in (e.detail or "") for e in t.events)

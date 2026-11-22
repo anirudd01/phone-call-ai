@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from carwash_voice.config import Settings
 from carwash_voice.db.session import run_db
-from carwash_voice.domain import calls
+from carwash_voice.domain import calls, outbound
 from carwash_voice.logging import call_logging
 from carwash_voice.voice.providers.base import VoiceProvider
 from carwash_voice.voice.recording import LocalRecordingStore, RecordingStore, wav_bytes
@@ -183,19 +183,36 @@ async def run_call(
                 # Best effort: finalising the call record below must still happen.
                 logger.exception("Could not flush the recording buffer")
             audio_path = _save_recording(res, call.call_id, audio)
-            await asyncio.shield(
-                run_db(
-                    res.session_factory,
-                    calls.finalize_call,
-                    call.call_id,
-                    reason,
-                    transcript=handle.transcript,
-                    audio_path=audio_path,
-                    ticket_id=handle.ticket_id,
-                )
-            )
+            # One shielded unit: if this task is being cancelled (peer gone), every await here
+            # raises again, but the shielded work still runs to the end.
+            await asyncio.shield(_store_outcome(res, call, handle, reason, audio_path))
             logger.info("Call finished: {}", reason)
         return reason
+
+
+async def _store_outcome(
+    res: CallResources, call: CallContext, handle: CallHandle, reason: str, audio_path: str | None
+) -> None:
+    """Finalise the call row and, for outbound calls, close a job the agent never finished."""
+    await run_db(
+        res.session_factory,
+        calls.finalize_call,
+        call.call_id,
+        reason,
+        transcript=handle.transcript,
+        audio_path=audio_path,
+        ticket_id=handle.ticket_id,
+    )
+    if call.outbound_job_id is None:
+        return
+    # The agent records the outcome; if the customer hung up first, the job would otherwise
+    # stay "dialling" for ever and could never be dialled again.
+    try:
+        job_id = call.outbound_job_id
+        if await run_db(res.session_factory, outbound.close_unfinished_job, job_id):
+            logger.warning("Outbound job {} had no outcome; marked failed", job_id)
+    except Exception:
+        logger.exception("Could not close outbound job {}", call.outbound_job_id)
 
 
 def _save_recording(res: CallResources, call_id: str, audio: dict[str, Any]) -> str | None:

@@ -9,7 +9,7 @@ so the agent can say something sensible instead of the call failing.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from carwash_voice.db.models import (
     CreatedVia,
+    Customer,
     JobStatus,
     Ticket,
     TicketCategory,
@@ -27,7 +28,8 @@ from carwash_voice.db.models import (
 )
 from carwash_voice.db.session import run_db
 from carwash_voice.domain import customers, outbound, tickets
-from carwash_voice.domain.errors import DomainError
+from carwash_voice.domain.errors import DomainError, NotFoundError
+from carwash_voice.domain.phone import normalize_phone, normalize_registration
 from carwash_voice.voice.session import CallContext, CallHandle
 
 SPOKEN_STATUS = {
@@ -41,11 +43,52 @@ SPOKEN_STATUS = {
 OUTBOUND_OUTCOMES = ("delivered", "call_back_later", "declined")
 
 
+# One reply for "not found" and "not confirmed", so callers can't probe which tickets or phone
+# numbers exist.
+PRIVACY_ERROR = (
+    "No ticket found for this caller with those details. Ask the caller to check the ticket "
+    "number and for the car registration number on the ticket, then call this tool again with "
+    "car_registration."
+)
+
+
 @dataclass
 class ToolState:
     call: CallContext
     handle: CallHandle
     customer_id: int | None = None
+    verified: set[int] = field(default_factory=set)  # customers confirmed as this caller
+
+
+# --- privacy -----------------------------------------------------------------------------------
+# A customer's details are shared only with someone who is plausibly that customer: the call
+# comes from the customer's own number, or the caller gives a second matching detail (the car
+# registration) on top of the ticket number or phone number. Five-digit ticket numbers and car
+# plates are easy to guess or see, so neither is enough on its own.
+
+
+def _phone(raw: str | None) -> str | None:
+    try:
+        return normalize_phone(raw)
+    except DomainError:
+        return None
+
+
+def _is_callers(state: ToolState, customer: Customer) -> bool:
+    caller = _phone(state.call.caller_number)
+    return bool(caller and customer.phone == caller)
+
+
+def _reg_matches(customer: Customer, args: dict[str, Any]) -> bool:
+    reg = normalize_registration(args.get("car_registration"))
+    return bool(reg and customer.car_registration == reg)
+
+
+def _verify(state: ToolState, customer: Customer, second_factor: bool) -> bool:
+    if second_factor or customer.id in state.verified or _is_callers(state, customer):
+        state.verified.add(customer.id)
+        return True
+    return False
 
 
 def _spoken_ref(ref: str) -> str:
@@ -67,12 +110,24 @@ def _ticket_summary(t: Ticket) -> dict[str, Any]:
 
 
 def find_customer(session: Session, state: ToolState, args: dict[str, Any]) -> dict[str, Any]:
-    phone = args.get("phone") or state.call.caller_number
+    said_phone = args.get("phone")
     customer = customers.find_customer(
-        session, phone=phone, car_registration=args.get("car_registration")
+        session,
+        phone=said_phone or state.call.caller_number,
+        car_registration=args.get("car_registration"),
     )
     if customer is None:
         return {"found": False}
+    said = _phone(said_phone)
+    two_details = bool(said and customer.phone == said and _reg_matches(customer, args))
+    if not _verify(state, customer, two_details):
+        return {
+            "found": False,
+            "note": (
+                "No record confirmed for this caller. Do not share any details; ask for their "
+                "name and save them with upsert_customer."
+            ),
+        }
     state.customer_id = customer.id
     open_refs = [t.public_ref for t in tickets.latest_open_for_phone(session, customer.phone or "")]
     return {
@@ -85,19 +140,41 @@ def find_customer(session: Session, state: ToolState, args: dict[str, Any]) -> d
 
 
 def upsert_customer(session: Session, state: ToolState, args: dict[str, Any]) -> dict[str, Any]:
-    customer = customers.upsert_customer(
-        session,
-        name=args.get("name"),
-        phone=args.get("phone") or state.call.caller_number,
-        car_registration=args.get("car_registration"),
-        preferred_language=args.get("preferred_language"),
-    )
+    """Update the caller's own record, or create a new one. Never attaches to someone else's.
+
+    The caller's own record is the one already confirmed in this call, or the one with the
+    caller's phone number. A phone number or registration the caller only *says* never selects
+    an existing record: anything else becomes a new customer.
+    """
+    name, reg = args.get("name"), args.get("car_registration")
+    language = args.get("preferred_language")
+    caller = _phone(state.call.caller_number)
+    customer = None
+    if state.customer_id is not None and state.customer_id in state.verified:
+        customer = customers.get_customer(session, state.customer_id)
+    elif caller:
+        customer = customers.find_customer(session, phone=caller)
+    if customer is not None:
+        customers.update_customer(
+            session, customer, name=name, car_registration=reg, preferred_language=language
+        )
+    else:
+        phone = caller or _phone(args.get("phone"))
+        if phone and customers.find_customer(session, phone=phone) is not None:
+            phone = None  # that number belongs to another customer: don't take it over
+        customer = customers.create_customer(
+            session, name=name, phone=phone, car_registration=reg, preferred_language=language
+        )
     state.customer_id = customer.id
+    state.verified.add(customer.id)
     return {"customer_id": customer.id, "name": customer.name, "phone": customer.phone}
 
 
 def create_ticket(session: Session, state: ToolState, args: dict[str, Any]) -> dict[str, Any]:
-    customer_id = args.get("customer_id") or state.customer_id
+    customer_id = state.customer_id
+    given = args.get("customer_id")
+    if given is not None and int(given) in state.verified:
+        customer_id = int(given)
     if customer_id is None:
         return {"error": "Save the customer first with upsert_customer."}
     via = (
@@ -107,7 +184,7 @@ def create_ticket(session: Session, state: ToolState, args: dict[str, Any]) -> d
     )
     ticket = tickets.create_ticket(
         session,
-        customer_id=int(customer_id),
+        customer_id=customer_id,
         category=args.get("category", ""),
         description=args.get("description", ""),
         wash_location=args.get("wash_location"),
@@ -118,15 +195,31 @@ def create_ticket(session: Session, state: ToolState, args: dict[str, Any]) -> d
     return {"ticket_ref": ticket.public_ref, "say_it_as": _spoken_ref(ticket.public_ref)}
 
 
+def _confirmed_ticket(session: Session, state: ToolState, args: dict[str, Any]) -> Ticket | None:
+    """The ticket named in args if the caller may use it; None if missing or not confirmed."""
+    try:
+        ticket = tickets.get_ticket(session, args.get("public_ref", ""))
+    except NotFoundError:
+        return None
+    if not _verify(state, ticket.customer, _reg_matches(ticket.customer, args)):
+        return None
+    return ticket
+
+
 def get_ticket_status(session: Session, state: ToolState, args: dict[str, Any]) -> dict[str, Any]:
     ref = args.get("public_ref")
     if ref:
-        ticket = tickets.get_ticket(session, ref)
+        ticket = _confirmed_ticket(session, state, args)
+        if ticket is None:
+            return {"error": PRIVACY_ERROR}
         state.handle.ticket_id = state.handle.ticket_id or ticket.id
         return _ticket_summary(ticket)
     phone = args.get("phone") or state.call.caller_number
     if not phone:
         return {"error": "Ask the customer for a ticket number or a phone number."}
+    customer = customers.find_customer(session, phone=phone)
+    if customer is None or not _verify(state, customer, _reg_matches(customer, args)):
+        return {"error": PRIVACY_ERROR}
     found = tickets.latest_open_for_phone(session, phone)
     if not found:
         return {"tickets": [], "note": "No open tickets for this phone number."}
@@ -134,7 +227,9 @@ def get_ticket_status(session: Session, state: ToolState, args: dict[str, Any]) 
 
 
 def add_ticket_note(session: Session, state: ToolState, args: dict[str, Any]) -> dict[str, Any]:
-    ticket = tickets.get_ticket(session, args.get("public_ref", ""))
+    ticket = _confirmed_ticket(session, state, args)
+    if ticket is None:
+        return {"error": PRIVACY_ERROR}
     tickets.add_note(session, ticket, args.get("note", ""))
     return {"ok": True, "ticket_ref": ticket.public_ref}
 
@@ -142,7 +237,9 @@ def add_ticket_note(session: Session, state: ToolState, args: dict[str, Any]) ->
 def request_human_callback(
     session: Session, state: ToolState, args: dict[str, Any]
 ) -> dict[str, Any]:
-    ticket = tickets.get_ticket(session, args.get("public_ref", ""))
+    ticket = _confirmed_ticket(session, state, args)
+    if ticket is None:
+        return {"error": PRIVACY_ERROR}
     tickets.request_callback(
         session,
         ticket,
@@ -238,13 +335,24 @@ def tool_schemas(direction: str) -> ToolsSchema:
             properties={
                 "public_ref": {"type": _S, "description": "Ticket number like CW-24871"},
                 "phone": {"type": _S},
+                "car_registration": {
+                    "type": _S,
+                    "description": "Needed if the call is not from the customer's number",
+                },
             },
             required=[],
         ),
         FunctionSchema(
             name="add_ticket_note",
             description="Add extra details the customer gave later to an existing ticket.",
-            properties={"public_ref": {"type": _S}, "note": {"type": _S}},
+            properties={
+                "public_ref": {"type": _S},
+                "note": {"type": _S},
+                "car_registration": {
+                    "type": _S,
+                    "description": "Needed if the call is not from the customer's number",
+                },
+            },
             required=["public_ref", "note"],
         ),
         FunctionSchema(
@@ -257,6 +365,10 @@ def tool_schemas(direction: str) -> ToolsSchema:
                 "public_ref": {"type": _S},
                 "reason": {"type": _S},
                 "preferred_time": {"type": _S, "description": "When they would like the call"},
+                "car_registration": {
+                    "type": _S,
+                    "description": "Needed if the call is not from the customer's number",
+                },
             },
             required=["public_ref", "reason"],
         ),
@@ -320,7 +432,15 @@ def make_handlers(
     async def end_call(params: FunctionCallParams) -> None:
         reason = str((params.arguments or {}).get("reason") or "agent_done")
         arm_end_call(reason)
-        await params.result_callback({"ok": True, "instruction": "Say a brief goodbye now."})
+        await params.result_callback(
+            {
+                "ok": True,
+                "instruction": (
+                    "The call ends when you stop speaking. If you have already said goodbye, "
+                    "say nothing more. Otherwise say one short goodbye now."
+                ),
+            }
+        )
 
     handlers = {name: wrap(name) for name in SYNC_TOOLS}
     handlers["end_call"] = end_call

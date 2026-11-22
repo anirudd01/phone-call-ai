@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from carwash_voice.db.models import (
@@ -14,7 +14,7 @@ from carwash_voice.db.models import (
     TicketEvent,
 )
 from carwash_voice.domain.customers import get_customer
-from carwash_voice.domain.errors import InvalidInputError, NotFoundError
+from carwash_voice.domain.errors import ConflictError, InvalidInputError, NotFoundError
 from carwash_voice.domain.tickets import get_ticket
 
 
@@ -98,3 +98,47 @@ def set_job_status(
         )
     session.commit()
     return job
+
+
+def claim_for_dialling(session: Session, job_id: int) -> OutboundJob:
+    """Move a queued job to dialling in one conditional update, so it can't be dialled twice."""
+    job = get_job(session, job_id)
+    result = session.execute(
+        update(OutboundJob)
+        .where(OutboundJob.id == job_id, OutboundJob.status == JobStatus.QUEUED)
+        .values(status=JobStatus.DIALLING)
+    )
+    session.commit()
+    session.refresh(job)
+    if result.rowcount != 1:
+        raise ConflictError(f"Job is {job.status.value}, not queued")
+    return job
+
+
+UNFINISHED_NOTE = "Call ended before the agent recorded an outcome; re-queue to try again"
+
+
+def close_unfinished_job(session: Session, job_id: int) -> bool:
+    """After an outbound call ends: a job still 'dialling' never got an outcome, so mark it
+    failed (staff can re-queue it). Returns True if the job was changed."""
+    result = session.execute(
+        update(OutboundJob)
+        .where(OutboundJob.id == job_id, OutboundJob.status == JobStatus.DIALLING)
+        .values(status=JobStatus.FAILED, outcome_note=UNFINISHED_NOTE)
+    )
+    if result.rowcount != 1:  # gone, or the agent already recorded an outcome
+        session.commit()
+        return False
+    job = get_job(session, job_id)
+    session.refresh(job)
+    if job.ticket_id:
+        session.add(
+            TicketEvent(
+                ticket_id=job.ticket_id,
+                kind=EventKind.NOTE,
+                detail=f"Outbound call failed: {UNFINISHED_NOTE}",
+                actor=Actor.AGENT,
+            )
+        )
+    session.commit()
+    return True

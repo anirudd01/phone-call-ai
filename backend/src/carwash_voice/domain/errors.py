@@ -13,3 +13,7 @@ class NotFoundError(DomainError):
 
 class InvalidInputError(DomainError):
     pass
+
+
+class ConflictError(DomainError):
+    """The record is not in a state that allows the change (for example, already dialling)."""

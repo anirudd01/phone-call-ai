@@ -96,9 +96,8 @@ class Console:
         await self._call.stop(reason)
         if self._audio is not None:
             self._audio.stop()
-        if self._job_id is not None:
-            with contextlib.suppress(Exception):
-                await self._job_status("completed", "call ended from the bridge")
+        # The agent records the outbound outcome itself, and the backend marks a job that ended
+        # without one as failed, so the bridge does not set a status here.
         say("Call ended.")
         self._audio = self._call = self._pump = None
         self._job_id = None

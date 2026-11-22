@@ -5,9 +5,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     ClientConnectedFrame,
-    LLMFullResponseStartFrame,
     LLMRunFrame,
 )
 from pipecat.tests.utils import SleepFrame, run_test
@@ -134,6 +134,131 @@ def test_complete_outbound_job_outcomes(session: Session) -> None:
     assert "error" in tools.complete_outbound_job(session, _state(), {"outcome": "delivered"})
 
 
+def _ticket_for(session: Session, phone: str, reg: str) -> str:
+    c = customers.upsert_customer(session, name="Ravi", phone=phone, car_registration=reg)
+    return tickets.create_ticket(session, c.id, "damage", "scratch on door").public_ref
+
+
+def test_stranger_needs_registration_to_hear_a_ticket(session: Session) -> None:
+    ref = _ticket_for(session, "9845012345", "KA01AB1234")
+    stranger = _state(caller="+919900011122")
+    assert tools.get_ticket_status(session, stranger, {"public_ref": ref}) == {
+        "error": tools.PRIVACY_ERROR
+    }
+    assert "error" in tools.add_ticket_note(session, stranger, {"public_ref": ref, "note": "x"})
+    assert "error" in tools.request_human_callback(
+        session, stranger, {"public_ref": ref, "reason": "x"}
+    )
+    wrong = {"public_ref": ref, "car_registration": "KA01ZZ9999"}
+    assert "error" in tools.get_ticket_status(session, stranger, wrong)
+    right = {"public_ref": ref, "car_registration": "ka 01 ab 1234"}
+    assert tools.get_ticket_status(session, stranger, right)["ticket_ref"] == ref
+    # once confirmed, the rest of the call can use the ticket
+    assert tools.add_ticket_note(session, stranger, {"public_ref": ref, "note": "red car"})["ok"]
+
+
+def test_stranger_cannot_list_another_numbers_tickets(session: Session) -> None:
+    _ticket_for(session, "9845012345", "KA01AB1234")
+    stranger = _state(caller="+919900011122")
+    out = tools.get_ticket_status(session, stranger, {"phone": "9845012345"})
+    assert out == {"error": tools.PRIVACY_ERROR}
+    both = {"phone": "9845012345", "car_registration": "KA01AB1234"}
+    assert len(tools.get_ticket_status(session, stranger, both)["tickets"]) == 1
+
+
+def test_find_customer_by_registration_alone_reveals_nothing(session: Session) -> None:
+    _ticket_for(session, "9845012345", "KA01AB1234")
+    stranger = _state(caller="+919900011122")
+    out = tools.find_customer(session, stranger, {"car_registration": "KA01AB1234"})
+    assert out["found"] is False and "name" not in out and stranger.customer_id is None
+    owner = tools.find_customer(session, _state(), {})
+    assert owner["found"] and owner["name"] == "Ravi" and len(owner["open_tickets"]) == 1
+
+
+def test_upsert_never_takes_over_another_customers_number(session: Session) -> None:
+    owner = customers.upsert_customer(
+        session, name="Ravi", phone="9845012345", car_registration="KA01AB1234"
+    )
+    stranger = _state(caller="+919900011122")
+    out = tools.upsert_customer(
+        session, stranger, {"name": "Someone", "car_registration": "KA01AB1234"}
+    )
+    assert out["customer_id"] != owner.id and out["phone"] == "+919900011122"
+    session.refresh(owner)
+    assert owner.phone == "+919845012345" and owner.name == "Ravi"
+
+
+def test_saying_a_victims_number_does_not_unlock_their_record(session: Session) -> None:
+    """Review finding 1a: a stranger names the victim's phone number in upsert_customer."""
+    ref = _ticket_for(session, "9845012345", "KA01AB1234")
+    victim = customers.find_customer(session, phone="9845012345")
+    stranger = _state(caller="+919900011122")
+    out = tools.upsert_customer(session, stranger, {"name": "Mallory", "phone": "9845012345"})
+    assert out["customer_id"] != victim.id and out["phone"] == "+919900011122"
+    session.refresh(victim)
+    assert victim.name == "Ravi"
+    assert tools.get_ticket_status(session, stranger, {"phone": "9845012345"}) == {
+        "error": tools.PRIVACY_ERROR
+    }
+    assert tools.get_ticket_status(session, stranger, {"public_ref": ref}) == {
+        "error": tools.PRIVACY_ERROR
+    }
+
+
+def test_unknown_caller_with_victims_registration_gets_a_new_record(session: Session) -> None:
+    """Review finding 1b: no caller number (withheld) plus the victim's car registration."""
+    _ticket_for(session, "9845012345", "KA01AB1234")
+    victim = customers.find_customer(session, phone="9845012345")
+    anon = _state(caller=None)
+    out = tools.upsert_customer(
+        session, anon, {"name": "Mallory", "car_registration": "KA01AB1234"}
+    )
+    assert out["customer_id"] != victim.id and out["phone"] is None
+    session.refresh(victim)
+    assert victim.name == "Ravi"
+    found = tools.find_customer(session, anon, {"car_registration": "KA01AB1234"})
+    assert "name" not in found or found["name"] != "Ravi"
+
+
+def test_upsert_updates_the_callers_own_record(session: Session) -> None:
+    st = _state()
+    first = tools.upsert_customer(session, st, {"name": "Ravi"})
+    # a later call from the same number updates the same record
+    again = tools.upsert_customer(
+        session, _state(), {"name": "Ravi K", "car_registration": "ka01ab1234"}
+    )
+    assert again["customer_id"] == first["customer_id"]
+    c = customers.get_customer(session, first["customer_id"])
+    assert c.name == "Ravi K" and c.car_registration == "KA01AB1234"
+
+
+def test_create_ticket_ignores_an_unconfirmed_customer_id(session: Session) -> None:
+    """Review finding 2: a model-supplied customer_id must not reach another customer."""
+    _ticket_for(session, "9845012345", "KA01AB1234")
+    victim = customers.find_customer(session, phone="9845012345")
+    stranger = _state(caller="+919900011122")
+    out = tools.create_ticket(
+        session, stranger, {"customer_id": victim.id, "category": "other", "description": "x"}
+    )
+    assert "error" in out
+
+
+def test_lookups_do_not_reveal_what_exists(session: Session) -> None:
+    """Review finding 6: same reply for unknown and for not-confirmed."""
+    ref = _ticket_for(session, "9845012345", "KA01AB1234")
+    stranger = _state(caller="+919900011122")
+    known = tools.get_ticket_status(session, stranger, {"public_ref": ref})
+    unknown_ref = "CW-99999" if ref != "CW-99999" else "CW-99998"
+    unknown = tools.get_ticket_status(session, stranger, {"public_ref": unknown_ref})
+    assert known == unknown == {"error": tools.PRIVACY_ERROR}
+    known_phone = tools.get_ticket_status(session, stranger, {"phone": "9845012345"})
+    unknown_phone = tools.get_ticket_status(session, stranger, {"phone": "9845099999"})
+    assert known_phone == unknown_phone == {"error": tools.PRIVACY_ERROR}
+    assert tools.add_ticket_note(session, stranger, {"public_ref": unknown_ref, "note": "x"}) == {
+        "error": tools.PRIVACY_ERROR
+    }
+
+
 def test_schemas_per_direction() -> None:
     inbound = {s.name for s in tools.tool_schemas("inbound").standard_tools}
     outbound_names = {s.name for s in tools.tool_schemas("outbound").standard_tools}
@@ -163,11 +288,12 @@ async def test_async_handlers_wrap_errors_and_arm_end_call(client: TestClient) -
         return SimpleNamespace(arguments=args, result_callback=cb)
 
     await handlers["get_ticket_status"](params({"public_ref": "CW-00000"}))
-    assert "error" in results[-1] and "not found" in results[-1]["error"]
+    assert results[-1] == {"error": tools.PRIVACY_ERROR}
     await handlers["upsert_customer"](params({"name": "Ravi"}))
     assert results[-1]["customer_id"]
     await handlers["end_call"](params({"reason": "done"}))
     assert armed == ["done"] and results[-1]["ok"]
+    assert "already said goodbye" in results[-1]["instruction"]
 
 
 # --- pipeline helpers --------------------------------------------------------------------------
@@ -201,25 +327,34 @@ async def test_end_call_watcher_ignores_speech_when_not_armed() -> None:
     assert handle.ended == []
 
 
-async def test_end_call_watcher_waits_for_goodbye_then_ends() -> None:
+async def test_end_call_watcher_silent_agent_waits_for_goodbye_then_ends() -> None:
     handle = _FakeHandle()
-    watcher = EndCallWatcher(handle, fallback_secs=30)
-    watcher.arm("customer_done")
+    watcher = EndCallWatcher(handle, fallback_secs=30, silence_secs=30)
+    watcher.arm("customer_done")  # armed while the agent is silent
     await run_test(
         watcher,
         frames_to_send=[
-            BotStoppedSpeakingFrame(),  # the sentence already being said: not the goodbye
-            LLMFullResponseStartFrame(),  # the goodbye response starts
+            BotStoppedSpeakingFrame(),  # stray stop with no speech after arming: ignored
+            BotStartedSpeakingFrame(),  # the goodbye starts
             SleepFrame(),  # system frames overtake queued ones; keep the real-call order
-            BotStoppedSpeakingFrame(),  # and finishes speaking
+            BotStoppedSpeakingFrame(),  # and finishes
         ],
     )
     assert handle.ended == ["customer_done"]
 
 
-async def test_end_call_watcher_fallback_timeout() -> None:
+async def test_end_call_watcher_ends_when_goodbye_already_playing_stops() -> None:
     handle = _FakeHandle()
-    watcher = EndCallWatcher(handle, fallback_secs=0.1)
+    watcher = EndCallWatcher(handle, fallback_secs=30, silence_secs=30)
+    watcher._bot_speaking = True  # goodbye said in the same turn as the end_call tool call
+    watcher.arm("customer_done")
+    await run_test(watcher, frames_to_send=[BotStoppedSpeakingFrame()])
+    assert handle.ended == ["customer_done"]  # no second goodbye needed
+
+
+async def test_end_call_watcher_ends_quickly_if_agent_stays_silent() -> None:
+    handle = _FakeHandle()
+    watcher = EndCallWatcher(handle, fallback_secs=30, silence_secs=0.1)
     watcher.arm("stuck")
     await asyncio.wait_for(handle.event.wait(), timeout=2)
     assert handle.ended == ["stuck"]

@@ -10,11 +10,12 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
 from html import escape
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Request, Response, WebSocket
+from fastapi import APIRouter, FastAPI, Request, Response, WebSocket
 from loguru import logger
 from pipecat.serializers.plivo import PlivoFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
@@ -34,6 +35,40 @@ CLOSE_UNAUTHORIZED = 4401
 CLOSE_BAD_START = 4400
 CLOSE_UNAVAILABLE = 4503
 CONTENT_TYPE = "audio/x-mulaw;rate=8000"  # must match what PlivoFrameSerializer sends
+
+
+PENDING_TTL_SECS = 300
+
+
+class PendingCalls:
+    """What /plivo/answer learned about each call, kept until its media socket opens.
+
+    Keyed by Plivo's CallUUID; the socket's start event carries the same id as `callId`. This
+    avoids relying on how Plivo echoes `extraHeaders` back (unverified). In memory, which is
+    fine for one server process; entries expire after PENDING_TTL_SECS.
+    """
+
+    def __init__(self, ttl: float = PENDING_TTL_SECS) -> None:
+        self._ttl = ttl
+        self._items: dict[str, tuple[float, dict[str, str]]] = {}
+
+    def put(self, call_uuid: str, info: dict[str, str]) -> None:
+        now = time.monotonic()
+        self._items = {k: v for k, v in self._items.items() if v[0] > now}
+        self._items[call_uuid] = (now + self._ttl, dict(info))
+
+    def pop(self, call_uuid: str) -> dict[str, str] | None:
+        item = self._items.pop(call_uuid, None)
+        if item is None or item[0] < time.monotonic():
+            return None
+        return item[1]
+
+
+def pending_calls(app: FastAPI) -> PendingCalls:
+    store = getattr(app.state, "plivo_pending", None)
+    if store is None:
+        store = app.state.plivo_pending = PendingCalls()
+    return store
 
 
 def ws_url(settings: Settings) -> str:
@@ -107,7 +142,10 @@ async def answer(request: Request) -> Response:
     extra = {"direction": direction, "customer": e164(customer) or ""}
     if direction == "outbound" and job_id.isdigit():
         extra["job_id"] = job_id
-    logger.info("Plivo answer: {} call, call {}", direction, form.get("CallUUID", "?"))
+    call_uuid = form.get("CallUUID", "")
+    if call_uuid:
+        pending_calls(request.app).put(call_uuid, extra)
+    logger.info("Plivo answer: {} call, call {}", direction, call_uuid or "?")
     return Response(content=stream_xml(settings, extra), media_type="application/xml")
 
 
@@ -187,7 +225,13 @@ async def plivo_media(ws: WebSocket, secret: str) -> None:
         await _close(ws, CLOSE_UNAVAILABLE)
         return
 
-    extra = parse_extra_headers(first.get("extra_headers", start.get("extra_headers")))
+    extra = pending_calls(ws.app).pop(str(call_id))
+    if extra is not None:
+        source = "answer webhook"
+    else:
+        extra = parse_extra_headers(first.get("extra_headers", start.get("extra_headers")))
+        source = "start extra_headers" if extra else "none (treated as inbound, number unknown)"
+    logger.info("Plivo call details from: {}", source)
     direction = "outbound" if extra.get("direction") == "outbound" else "inbound"
     job = extra.get("job_id", "")
     call = CallContext(

@@ -8,8 +8,9 @@ from fastapi.responses import FileResponse
 from carwash_voice.api import schemas
 from carwash_voice.api.deps import SessionDep, SettingsDep, require_admin, require_bridge
 from carwash_voice.db.models import Actor, JobStatus, TicketStatus
+from carwash_voice.db.session import run_db
 from carwash_voice.domain import calls, customers, outbound, tickets
-from carwash_voice.domain.errors import InvalidInputError, NotFoundError
+from carwash_voice.domain.errors import ConflictError, InvalidInputError, NotFoundError
 from carwash_voice.transports.plivo.dialer import DialError
 from carwash_voice.voice.recording import LocalRecordingStore
 
@@ -135,21 +136,45 @@ def list_outbound_jobs(session: SessionDep, status: JobStatus | None = None, lim
 
 
 @router.post("/outbound-jobs/{job_id}/dial", response_model=schemas.OutboundJobOut)
-async def dial_outbound_job(job_id: int, request: Request, session: SessionDep):
-    """Place the phone call for a queued job through the phone provider (Plivo)."""
+async def dial_outbound_job(job_id: int, request: Request):
+    """Place the phone call for a queued job through the phone provider (Plivo).
+
+    Database work runs in a worker thread so live call audio on the event loop never waits.
+    """
+    factory = request.app.state.session_factory
     try:
-        job = outbound.get_job(session, job_id)
+        job = await run_db(factory, outbound.claim_for_dialling, job_id)
     except NotFoundError as exc:
         raise _missing(exc) from exc
-    if job.status != JobStatus.QUEUED:
-        raise HTTPException(status_code=409, detail=f"Job is {job.status.value}, not queued")
-    outbound.set_job_status(session, job_id, JobStatus.DIALLING)
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         await request.app.state.dialer.dial(job_id, job.phone)
     except DialError as exc:
-        job = outbound.set_job_status(session, job_id, JobStatus.FAILED, str(exc))
+        await run_db(factory, outbound.set_job_status, job_id, JobStatus.FAILED, str(exc))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return outbound.get_job(session, job_id)
+    return await run_db(factory, outbound.get_job, job_id)
+
+
+@router.post("/outbound-jobs/{job_id}/status", response_model=schemas.OutboundJobOut)
+def set_outbound_job_status_admin(
+    job_id: int, body: schemas.JobStatusIn, session: SessionDep, force: bool = False
+):
+    """Staff override, for example to re-queue a failed job.
+
+    A job that is dialling may have a live call, so changing it needs `?force=true` (for a job
+    left stuck by a server crash).
+    """
+    try:
+        job = outbound.get_job(session, job_id)
+        if job.status == JobStatus.DIALLING and not force:
+            raise HTTPException(
+                status_code=409,
+                detail="Job is dialling and a call may be live; add ?force=true if it is stuck",
+            )
+        return outbound.set_job_status(session, job_id, body.status, body.outcome_note)
+    except NotFoundError as exc:
+        raise _missing(exc) from exc
 
 
 # --- outbound jobs (bridge) --------------------------------------------------

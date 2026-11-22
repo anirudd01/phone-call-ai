@@ -299,3 +299,119 @@ def test_hangup_webhook_ignores_answered_and_bad_signature(plivo_settings: Setti
 async def test_plivo_dialer_requires_config(settings: Settings) -> None:
     with pytest.raises(DialError, match="not configured"):
         await PlivoDialer(settings).dial(1, "+919845012345")
+
+
+# --- review fixes (2026-11-22) -----------------------------------------------------------------
+
+
+def test_call_details_come_from_answer_webhook_not_extra_headers(plivo_client: TestClient) -> None:
+    """Outbound context must survive even if Plivo does not echo extraHeaders back."""
+    from carwash_voice.domain import customers, outbound
+
+    with plivo_client.app.state.session_factory() as s:
+        c = customers.upsert_customer(s, name="Ravi", phone="9845012345")
+        job_id = outbound.create_job(s, "Your car is ready", customer_id=c.id).id
+    call_id = "7b0e1f4a-3333-4222-8333-444455556666"
+    signed_post(
+        plivo_client,
+        {"CallUUID": call_id, "Direction": "outbound", "From": "8012345678", "To": "919845012345"},
+        query=f"job_id={job_id}",
+    )
+    with plivo_client.websocket_connect(f"/ws/plivo/{SECRET}") as ws:
+        ws.send_text(start_event(call_id, extra=""))  # no extra headers at all
+        ws.send_text(media_event())
+    row = wait_row(plivo_client, call_id, finished=False)
+    assert row is not None and row.direction.value == "outbound"
+    assert row.outbound_job_id == job_id and row.caller_number == "+919845012345"
+
+
+def test_pending_calls_expire_and_are_used_once() -> None:
+    from carwash_voice.transports.plivo.endpoint import PendingCalls
+
+    store = PendingCalls(ttl=60)
+    store.put("u1", {"direction": "inbound"})
+    assert store.pop("u1") == {"direction": "inbound"} and store.pop("u1") is None
+    old = PendingCalls(ttl=-1)
+    old.put("u2", {"direction": "inbound"})
+    assert old.pop("u2") is None
+
+
+def test_answered_call_without_outcome_is_marked_failed(plivo_settings: Settings) -> None:
+    """Customer hangs up before the agent records an outcome: the job must not stay dialling."""
+    with TestClient(create_app(plivo_settings, EchoProvider(), FakeDialer())) as c:
+        job_id = make_job(c)
+        c.post(f"/api/outbound-jobs/{job_id}/dial", headers={"X-Admin-Key": "test-admin"})
+        call_id = "7b0e1f4a-4444-4222-8333-444455556666"
+        extra = f"direction=outbound;customer=+919845012345;job_id={job_id}"
+        with c.websocket_connect(f"/ws/plivo/{SECRET}") as ws:
+            ws.send_text(start_event(call_id, extra))
+            for _ in range(30):
+                ws.send_text(media_event())
+            assert json.loads(ws.receive_text())["event"] == "playAudio"  # call is live
+        assert wait_row(c, call_id) is not None
+        end = time.monotonic() + 5
+        while job_status(c, job_id) == "dialling" and time.monotonic() < end:
+            time.sleep(0.05)
+        assert job_status(c, job_id) == "failed"
+        # staff can put it back in the queue and dial again
+        r = c.post(
+            f"/api/outbound-jobs/{job_id}/status",
+            json={"status": "queued"},
+            headers={"X-Admin-Key": "test-admin"},
+        )
+        assert r.status_code == 200 and r.json()["status"] == "queued"
+        dial = c.post(f"/api/outbound-jobs/{job_id}/dial", headers={"X-Admin-Key": "test-admin"})
+        assert dial.status_code == 200
+
+
+def test_plivo_secret_is_redacted_in_server_logs() -> None:
+    import logging
+
+    from carwash_voice.logging import RedactSecretPaths
+
+    record = logging.LogRecord(
+        "uvicorn.error",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "WebSocket %s" [accepted]',
+        ("1.2.3.4:5", f"/ws/plivo/{SECRET}"),
+        None,
+    )
+    RedactSecretPaths().filter(record)
+    assert SECRET not in record.getMessage() and "/ws/plivo/***" in record.getMessage()
+
+
+def test_staff_cannot_requeue_a_live_call_without_force(plivo_settings: Settings) -> None:
+    """Review finding 4: re-queueing a dialling job could place a second live call."""
+    with TestClient(create_app(plivo_settings, EchoProvider(), FakeDialer())) as c:
+        job_id = make_job(c)
+        c.post(f"/api/outbound-jobs/{job_id}/dial", headers={"X-Admin-Key": "test-admin"})
+        url = f"/api/outbound-jobs/{job_id}/status"
+        body = {"status": "queued"}
+        headers = {"X-Admin-Key": "test-admin"}
+        assert c.post(url, json=body, headers=headers).status_code == 409
+        forced = c.post(url + "?force=true", json=body, headers=headers)
+        assert forced.status_code == 200 and forced.json()["status"] == "queued"
+
+
+def test_redaction_keeps_uvicorn_access_log_working() -> None:
+    """Review finding 3: the access formatter unpacks exactly five args."""
+    import logging
+
+    from uvicorn.logging import AccessFormatter
+
+    from carwash_voice.logging import RedactSecretPaths
+
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("1.2.3.4:5", "GET", f"/ws/plivo/{SECRET}", "1.1", 404),
+        None,
+    )
+    RedactSecretPaths().filter(record)
+    line = AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s').format(record)
+    assert SECRET not in line and "/ws/plivo/***" in line and "404" in line
