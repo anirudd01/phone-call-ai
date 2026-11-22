@@ -6,6 +6,66 @@ tasks below in order, updating this file as you go.
 
 ---
 
+## 0. Current state: read this first after a context reset
+
+**Last updated:** 2026-11-22. Tasks 0 to 5 are finished or parked; **next is Task 6** (recording).
+
+**Direction change:** the phone path is now a **CPaaS** (Exotel or Plivo), not the Bluetooth
+bridge. Task 0 is parked after two failed attempts on the spare laptop (the phone keeps
+dropping the link; the Windows driver error `0x48F` / `GLE 0x1` appears when opening the
+phone's `Hands-Free HF Audio` device). `local/` stays only as phone-free laptop-mic test tooling.
+**Open decision for the user: Exotel or Plivo.** Not researched yet. The user said they will
+decide; offer a web-researched comparison (India pricing, number KYC, bidirectional media
+streaming, per-minute cost) when it is needed. Pipecat already ships `ExotelFrameSerializer`
+and `PlivoFrameSerializer` (8 kHz default). A new transport only needs to build a Pipecat
+transport and call `voice/session.py: run_call()`; `voice/` must not change.
+
+**Git state (verify with `git status` and `git log`):**
+- Branch `feature/scaffold`, 7 commits on top of the README commit. `develop` exists only
+  locally (it equals `main`); it is NOT on GitHub. User said "commit what you want"; **ask before
+  pushing**. The user already pushed `feature/scaffold` up to the spike fix (`e8343b1`); the
+  two newest local commits (call session and local bridge; voice agent) are not pushed.
+- Never commit `backend/.env` (it holds the user's real OpenAI key; it is git-ignored).
+
+**What works (all verified):**
+- Backend in `backend/` (Python 3.12, FastAPI, Pipecat 1.16.0, SQLAlchemy 2, Alembic). 75 offline
+  tests, Ruff clean. Run tests: `cd backend; py -3.12 -m uv run pytest -q`. Lint:
+  `py -3.12 -m uv run ruff check; py -3.12 -m uv run ruff format --check`.
+- Live test (spends a little money): `py -3.12 -m uv run pytest -m live -s`. Passed 3 of 3: the
+  agent greets, takes a spoken English complaint (fixtures in `backend/tests/fixtures/`) and
+  creates a ticket. Model `gpt-realtime-2.1`, voice `marin`, set in `backend/.env`.
+- Server: `py -3.12 -m uv run uvicorn carwash_voice.main:app`; `/healthz`, `/docs`, admin API
+  (`X-Admin-Key`), bridge endpoints (bearer token), `/ws/local-bridge` (protocol in
+  `local/docs/bridge-protocol.md`). The real provider is wired automatically when
+  `OPENAI_API_KEY` is set.
+
+**Not yet verified (do not claim these work):** the `end_call` goodbye flow live; outbound
+calls live; Kannada, Hindi, Hinglish; latency; Postgres (migration uses portable types but was
+only run on SQLite); Docker; Railway; the bridge app (`local/bridge/` is an empty skeleton).
+
+**Environment gotchas (this work laptop, Windows):**
+- `uv` is not on PATH: use `py -3.12 -m uv ...`. Set `PYTHONUTF8=1`.
+- Pipecat 1.16.0 needs `loguru<0.8` (pinned). Use `PipelineWorker` and `WorkerRunner`
+  (`add_workers()` then `run()`); `PipelineTask`/`PipelineRunner` are deprecated.
+- The Bash tool turns backslash escapes in commands into real characters (a `\x00` became a NUL
+  byte in a file, and some heredocs fail). Create files with the Write tool; if a script needs a
+  backslash, build it with `chr(92)` or `bytes([92])`.
+- Starlette test client: `ws.receive()` returns a close as a `websocket.close` message.
+  In Pipecat tests, system frames overtake queued ones; put a `SleepFrame` between them.
+- Long commands (live tests, about 55 s each) should run in the background.
+- The `.env` also contains unused keys from another project (`ACTIVE_MODEL`, `TTS_SPEED`,
+  `PYTHONDONTWRITEBYTECODE`); settings ignore them.
+
+**Suggested next steps:** (1) Task 6: record both sides with Pipecat's `AudioBufferProcessor`
+(`on_audio_data`; `OpenAIRealtimeLLMService` with `LLMContextAggregatorPair` keeps messages in
+the context, which can supply the transcript; for timestamps use transcription frames or
+aggregator events), storage interface, `purge-recordings` CLI; (2) Task 7 laptop-mic bridge so
+the user can talk to the agent with a headset; (3) when the user picks a CPaaS, add
+`transports/<provider>/` and re-scope tasks 8, 9 and 12; (4) Task 10 language check needs the
+user listening; (5) ask the user about pushing.
+
+---
+
 ## 1. Your role and how to work
 
 You are implementing a phone-call voice agent for a car-wash business in India. The
@@ -60,12 +120,12 @@ Working rules:
 | # | Task | Status | Where | Needs user? |
 |---|---|---|---|---|
 | 0 | Bluetooth bridge feasibility test (scripts + user run) | PARKED (user chose CPaaS on 2026-11-22; phone kept dropping the Bluetooth link; may retry later) | Work (write) → **Spare** (run) | Yes (hardware) |
-| 1 | Repo scaffolding and tooling (user has set up git) | DONE (committed locally on `feature/scaffold`; not pushed) | Work | Approve commit |
+| 1 | Repo scaffolding and tooling (user has set up git) | DONE (on `feature/scaffold`; `develop` local only) | Work | Approve commit |
 | 2 | Backend skeleton: config, logging, health, DB models, migrations | DONE | Work | No |
 | 3 | Ticket/customer domain + admin REST API | DONE | Work | No |
 | 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | DONE | Work | No |
 | 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | DONE | Work | API key |
-| 6 | Recording: audio + transcript storage | TODO | Work | No |
+| 6 | Recording: audio + transcript storage | TODO (**next**) | Work | No |
 | 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | TODO | Work | No |
 | 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | TODO | Work, then **Spare** | Yes (testing) |
 | 9 | Outbound update calls (re-scope with CPaaS: provider API dials) | TODO | **Spare** | Yes (testing) |
