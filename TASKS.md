@@ -8,28 +8,25 @@ tasks below in order, updating this file as you go.
 
 ## 0. Current state: read this first after a context reset
 
-**Last updated:** 2026-11-22. Tasks 1 to 7 are done (7 needs the user's listening test), Task 0 parked; **provider chosen: Plivo (Udyam registered); the inbound Plivo transport is built and tested offline (see `docs/plivo-setup.md`); next is Task 9 outbound dialling via the Plivo API, then Railway (Task 11)**. Git: commit and push straight to `main`, no branches. Provider research is in `docs/research-cpaas-exotel-vs-plivo.md` (recommends Plivo if the business has a GST/Udyam/incorporation document, else Exotel); the owner still has to choose. Git is now a single branch, `main`.
+**Last updated:** 2026-11-22 (paused by the user). Done: tasks 1 to 7. Coded and tested offline only: Plivo inbound transport, Plivo outbound dialling (task 9), Railway files (task 11). Parked: task 0 (Bluetooth). **Provider decided: Plivo** (the business has a Udyam registration). **Git: commit and push straight to `main`, no branches** (user rule until a server is running). Research: `docs/research-cpaas-exotel-vs-plivo.md`. Plivo guide: `docs/plivo-setup.md`. Railway guide: `docs/runbook-railway.md`.
 
 **Direction change:** the phone path is now a **CPaaS** (Exotel or Plivo), not the Bluetooth
 bridge. Task 0 is parked after two failed attempts on the spare laptop (the phone keeps
 dropping the link; the Windows driver error `0x48F` / `GLE 0x1` appears when opening the
 phone's `Hands-Free HF Audio` device). `local/` stays only as phone-free laptop-mic test tooling.
-**Decided 2026-11-22: Plivo.** (Old note:) Not researched yet. The user said they will
+**Decided 2026-11-22: Plivo.** (Old note, now resolved:) Not researched yet. The user said they will
 decide; offer a web-researched comparison (India pricing, number KYC, bidirectional media
 streaming, per-minute cost) when it is needed. Pipecat already ships `ExotelFrameSerializer`
 and `PlivoFrameSerializer` (8 kHz default). A new transport only needs to build a Pipecat
 transport and call `voice/session.py: run_call()`; `voice/` must not change.
 
-**Git state (verify with `git status` and `git log`):**
-- Branch `feature/scaffold`, 7 commits on top of the README commit. `develop` exists only
-  locally (it equals `main`); it is NOT on GitHub. User said "commit what you want"; **ask before
-  pushing**. The user already pushed `feature/scaffold` up to the spike fix (`e8343b1`); the
-  two newest local commits (call session and local bridge; voice agent) are not pushed.
-- Never commit `backend/.env` (it holds the user's real OpenAI key; it is git-ignored).
+**Git state (verify with `git status` and `git log`):** one branch, `main`, in sync with GitHub
+(`anirudd01/phone-call-ai`) at the time of the pause. Pushing is allowed and expected after each
+commit. Never commit `backend/.env` or `local/bridge/.env` (both git-ignored; real keys).
 
 **What works (all verified):**
-- Backend in `backend/` (Python 3.12, FastAPI, Pipecat 1.16.0, SQLAlchemy 2, Alembic). 75 offline
-  tests, Ruff clean. Run tests: `cd backend; py -3.12 -m uv run pytest -q`. Lint:
+- Backend in `backend/` (Python 3.12, FastAPI, Pipecat 1.16.0, SQLAlchemy 2, Alembic). 104 offline
+  tests (backend) plus 12 (bridge), Ruff clean. Run tests: `cd backend; py -3.12 -m uv run pytest -q`. Lint:
   `py -3.12 -m uv run ruff check; py -3.12 -m uv run ruff format --check`.
 - Live test (spends a little money): `py -3.12 -m uv run pytest -m live -s`. Passed 3 of 3: the
   agent greets, takes a spoken English complaint (fixtures in `backend/tests/fixtures/`) and
@@ -39,9 +36,16 @@ transport and call `voice/session.py: run_call()`; `voice/` must not change.
   `local/docs/bridge-protocol.md`). The real provider is wired automatically when
   `OPENAI_API_KEY` is set.
 
-**Not yet verified (do not claim these work):** the `end_call` goodbye flow live; outbound
-calls live; Kannada, Hindi, Hinglish; latency; Postgres (migration uses portable types but was
-only run on SQLite); Docker; Railway; the bridge app (`local/bridge/` is an empty skeleton).
+**Verified live:** headset test on this laptop through `local/bridge` (laptop mode, Plantronics
+headset, `IN_DEVICE`/`OUT_DEVICE`=`Plantronics`, both set in `local/bridge/.env`): the agent greets,
+the call is recorded as stereo WAV with a transcript, and the call row is finalised. The user said
+"testing complete" without detailed feedback on echo, delay or quality (ask if it matters).
+
+**Not yet verified (do not claim these work):** anything against real Plivo (inbound, outbound,
+signature check, `start.extra_headers`, audio content type, hang-up cutting off the goodbye);
+the `end_call` goodbye flow live; outbound calls live; Kannada, Hindi, Hinglish; latency;
+Postgres (only SQLite so far); the Docker build (no Docker on the work laptop); Railway deploy
+and volume permissions; a live transcript from a real OpenAI call beyond the greeting.
 
 **Environment gotchas (this work laptop, Windows):**
 - `uv` is not on PATH: use `py -3.12 -m uv ...`. Set `PYTHONUTF8=1`.
@@ -56,10 +60,16 @@ only run on SQLite); Docker; Railway; the bridge app (`local/bridge/` is an empt
 - The `.env` also contains unused keys from another project (`ACTIVE_MODEL`, `TTS_SPEED`,
   `PYTHONDONTWRITEBYTECODE`); settings ignore them.
 
-**Suggested next steps:** (1) Task 6 is done. (2) Task 7 laptop-mic bridge so
-the user can talk to the agent with a headset; (3) when the user picks a CPaaS, add
-`transports/<provider>/` and re-scope tasks 8, 9 and 12; (4) Task 10 language check needs the
-user listening; (5) ask the user about pushing.
+**Suggested next steps:** (1) the user creates the Railway project, Postgres and volume and
+sets variables per `docs/runbook-railway.md` (paid resources: the user decides), then gives the
+public URL; (2) rerun the headset test against Railway (`BACKEND_WS_URL=wss://<domain>/ws/local-bridge`)
+= Task 11 acceptance; (3) the user does Plivo KYC with the Udyam certificate, rents a
+landline-series number, asks Plivo whether voice service calls need DLT registration, and sets
+the `PLIVO_*` variables; (4) first real inbound call, then one outbound (`POST
+/api/outbound-jobs/{id}/dial`), fix whatever the "not yet verified" list gets wrong; (5) Task 10
+language scripts in `docs/language-test.md` (the user judges by listening); (6) try the Docker
+build on the spare laptop; (7) Task 13 hand-off pack. Optional: a cron to run
+`carwash-voice purge-recordings`; a calling-hours guard for outbound calls.
 
 ---
 
@@ -117,14 +127,14 @@ Working rules:
 | # | Task | Status | Where | Needs user? |
 |---|---|---|---|---|
 | 0 | Bluetooth bridge feasibility test (scripts + user run) | PARKED (user chose CPaaS on 2026-11-22; phone kept dropping the Bluetooth link; may retry later) | Work (write) → **Spare** (run) | Yes (hardware) |
-| 1 | Repo scaffolding and tooling (user has set up git) | DONE (on `feature/scaffold`; `develop` local only) | Work | Approve commit |
+| 1 | Repo scaffolding and tooling (user has set up git) | DONE (single branch `main`) | Work | Approve commit |
 | 2 | Backend skeleton: config, logging, health, DB models, migrations | DONE | Work | No |
 | 3 | Ticket/customer domain + admin REST API | DONE | Work | No |
 | 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | DONE | Work | No |
 | 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | DONE | Work | API key |
 | 6 | Recording: audio + transcript storage | DONE | Work | No |
-| 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | DONE (code and tests; needs a headset try-out) | Work | No |
-| 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | TODO | Work, then **Spare** | Yes (testing) |
+| 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | DONE (headset-tested) | Work | No |
+| 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | MOSTLY DONE (user headset test; ticket flow and detailed notes not recorded) | Work, then **Spare** | Yes (testing) |
 | 9 | Outbound update calls via the Plivo API | CODE DONE (untested on real Plivo) | **Spare** | Yes (testing) |
 | 10 | Language check: English, Kannada, Hindi, Hinglish | TODO | Work (laptop mic) or **Spare** | Yes (listening) |
 | 11 | Railway deployment (Dockerfile, Postgres, volume) | FILES DONE, deploy pending (user) | Work (Docker test on **Spare**) | Yes (Railway account) |
