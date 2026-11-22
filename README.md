@@ -8,7 +8,7 @@ It starts as a hobby prototype, but it is meant to become the real customer line
 car-wash business. The code is general: the business name, agent persona and tools are
 configuration, not hard-coded.
 
-> **Status:** planning done, implementation not started. Work is tracked in
+> **Status:** backend, recording, headset bridge, Plivo phone transport and Railway files are built and tested offline; not yet deployed or tried on a real phone call. The phone provider is Plivo. Work is tracked in
 > [TASKS.md](TASKS.md).
 
 ---
