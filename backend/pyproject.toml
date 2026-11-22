@@ -9,8 +9,10 @@ dependencies = [
     "loguru>=0.7.3,<0.8",
     "phonenumbers>=9.0.44",
     "pipecat-ai[openai,silero,websocket]>=1.16.0",
+    "plivo>=4.63.1",
     "psycopg[binary]>=3.3.9",
     "pydantic-settings>=2.16.3",
+    "python-multipart>=0.0.34",
     "sqlalchemy>=2",
     "uvicorn[standard]>=0.54.0",
 ]

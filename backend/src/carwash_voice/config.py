@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
     enable_local_bridge: bool = True
 
+    # Public https URL of this server (Railway). Plivo calls back to it.
+    public_base_url: str = ""
+    plivo_auth_id: str = ""
+    plivo_auth_token: str = ""
+    plivo_ws_secret: str = ""  # secret path segment of the media WebSocket URL
+    plivo_number: str = ""  # our Plivo number, used as the caller ID for outbound calls
+
     business_name: str = "Sparkle Car Wash"
     agent_name: str = "Asha"
     default_language: str = "en-IN"
@@ -42,6 +49,12 @@ class Settings(BaseSettings):
     @property
     def is_dev(self) -> bool:
         return self.app_env == "dev"
+
+    @property
+    def plivo_enabled(self) -> bool:
+        return all(
+            (self.public_base_url, self.plivo_auth_id, self.plivo_auth_token, self.plivo_ws_secret)
+        )
 
     @property
     def sqlalchemy_url(self) -> str:

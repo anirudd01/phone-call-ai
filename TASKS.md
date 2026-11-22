@@ -8,13 +8,13 @@ tasks below in order, updating this file as you go.
 
 ## 0. Current state: read this first after a context reset
 
-**Last updated:** 2026-11-22. Tasks 1 to 7 are done (7 needs the user's listening test), Task 0 parked; **provider chosen: Plivo (Udyam registered); next is the Plivo transport**. Git: commit and push straight to `main`, no branches. Provider research is in `docs/research-cpaas-exotel-vs-plivo.md` (recommends Plivo if the business has a GST/Udyam/incorporation document, else Exotel); the owner still has to choose. Git is now a single branch, `main`.
+**Last updated:** 2026-11-22. Tasks 1 to 7 are done (7 needs the user's listening test), Task 0 parked; **provider chosen: Plivo (Udyam registered); the inbound Plivo transport is built and tested offline (see `docs/plivo-setup.md`); next is Task 9 outbound dialling via the Plivo API, then Railway (Task 11)**. Git: commit and push straight to `main`, no branches. Provider research is in `docs/research-cpaas-exotel-vs-plivo.md` (recommends Plivo if the business has a GST/Udyam/incorporation document, else Exotel); the owner still has to choose. Git is now a single branch, `main`.
 
 **Direction change:** the phone path is now a **CPaaS** (Exotel or Plivo), not the Bluetooth
 bridge. Task 0 is parked after two failed attempts on the spare laptop (the phone keeps
 dropping the link; the Windows driver error `0x48F` / `GLE 0x1` appears when opening the
 phone's `Hands-Free HF Audio` device). `local/` stays only as phone-free laptop-mic test tooling.
-**Open decision for the user: Exotel or Plivo.** Not researched yet. The user said they will
+**Decided 2026-11-22: Plivo.** (Old note:) Not researched yet. The user said they will
 decide; offer a web-researched comparison (India pricing, number KYC, bidirectional media
 streaming, per-minute cost) when it is needed. Pipecat already ships `ExotelFrameSerializer`
 and `PlivoFrameSerializer` (8 kHz default). A new transport only needs to build a Pipecat
@@ -684,3 +684,19 @@ Result: _(fill in)_
 | 2026-11-22 | Initial plan (section 3) | User answers to planning questions | User |
 | 2026-11-22 | No Windows Phone Link; Bluetooth bridge code in `local/` (+ `transports/local/`); spare laptop runs phone tests; user sets up git | User follow-up | User |
 | 2026-11-22 | **Switch to CPaaS for the phone path.** Bluetooth bridge (task 0) is parked: the OnePlus phone kept disconnecting from the spare laptop. What was learned: Windows did expose the phone as `Hands-Free HF Audio` input/output (WDM-KS, 8 kHz mono), so a retry later is plausible. Consequences: the provider (Exotel or Plivo) must be chosen by the user; the CPaaS transport moves from phase 2 into the main plan; `local/` keeps only laptop-mic mode for phone-free testing; tasks 7, 8, 9 and 12 are re-scoped when the CPaaS transport is built. Until the user picks a provider, tasks 4 to 6 are built transport-neutral. | User unable to keep the Bluetooth link up | User |
+
+
+## Plivo transport notes (2026-11-22)
+
+- `backend/src/carwash_voice/transports/plivo/`: `endpoint.py` (`POST /plivo/answer`,
+  `WS /ws/plivo/{secret}`), `signature.py`. Settings: `PUBLIC_BASE_URL`, `PLIVO_AUTH_ID`,
+  `PLIVO_AUTH_TOKEN`, `PLIVO_WS_SECRET`, `PLIVO_NUMBER`; `Settings.plivo_enabled`.
+- New dependencies: `plivo` (SDK; its `validate_v3_signature` is used, and its source says it also
+  accepts a ws/wss URL, so Plivo may sign the WebSocket handshake too; unverified) and
+  `python-multipart` (form parsing).
+- The WebSocket is protected by the secret path segment. Signature checks cover the answer URL.
+- Unverified against real Plivo: that `start.extra_headers` carries our `extraHeaders`; that
+  `contentType` without `;rate=8000` is accepted from the serializer; that the hang-up request
+  does not cut off the goodbye; the exact `Direction`/`From`/`To` form fields. Tests fake all of
+  these from the documentation.
+- Tests: `backend/tests/test_plivo.py` (12). The hang-up call is mocked; never let tests reach Plivo.
