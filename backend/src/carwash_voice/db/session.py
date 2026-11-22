@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -31,3 +33,18 @@ def make_engine(url: str) -> Engine:
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(engine, expire_on_commit=False)
+
+
+async def run_db[T](
+    factory: sessionmaker[Session], fn: Callable[..., T], *args: Any, **kwargs: Any
+) -> T:
+    """Run a blocking DB function in a worker thread with its own session.
+
+    Keeps database work off the event loop so call audio never stalls.
+    """
+
+    def work() -> T:
+        with factory() as session:
+            return fn(session, *args, **kwargs)
+
+    return await asyncio.to_thread(work)

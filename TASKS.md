@@ -64,7 +64,7 @@ Working rules:
 | 2 | Backend skeleton: config, logging, health, DB models, migrations | DONE | Work | No |
 | 3 | Ticket/customer domain + admin REST API | DONE | Work | No |
 | 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | DONE | Work | No |
-| 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | TODO | Work | API key |
+| 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | DONE | Work | API key |
 | 6 | Recording: audio + transcript storage | TODO | Work | No |
 | 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | TODO | Work | No |
 | 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | TODO | Work, then **Spare** | Yes (testing) |
@@ -411,24 +411,24 @@ Result: 55 tests pass offline (14 for the bridge: happy path with a generated 1 
 
 ---
 
-### Task 5: Voice agent (OpenAI Realtime) — `TODO`
+### Task 5: Voice agent (OpenAI Realtime) — `DONE`
 
-- [ ] Provider seam `providers/base.py` and the OpenAI Realtime implementation using
+- [x] Provider seam `providers/base.py` and the OpenAI Realtime implementation using
       Pipecat's OpenAI Realtime service (check its current class name and session
       config). Use server-side voice activity detection and enable interruptions.
-- [ ] Prompt builder per section 4.6, separate inbound and outbound variants; outbound
+- [x] Prompt builder per section 4.6, separate inbound and outbound variants; outbound
       variant includes the job's customer name, ticket ref and message.
-- [ ] Tools per section 4.5 with JSON schemas and handlers; handlers run DB work off the
+- [x] Tools per section 4.5 with JSON schemas and handlers; handlers run DB work off the
       event loop (async session or thread) so audio never stalls.
-- [ ] `end_call` flow: agent speaks goodbye, waits for that audio to finish playing, then
+- [x] `end_call` flow: agent speaks goodbye, waits for that audio to finish playing, then
       the backend sends `end_call`.
-- [ ] A live smoke test (`pytest -m live`, skipped by default) that opens a real
+- [x] A live smoke test (`pytest -m live`, skipped by default) that opens a real
       session with a WAV of a short English complaint and asserts a ticket was created.
 
 Acceptance: unit tests for tools and prompt builder pass; the live smoke test passes when
 the user provides `OPENAI_API_KEY` (ask them to run it or to put the key in `.env`).
 
-Result: _(fill in)_
+Result: 75 offline tests pass (prompts, every tool body, async wrappers, schemas per direction, `GreetOnConnect`, `EndCallWatcher` incl. timeout, provider build, app wiring). Live smoke test (`uv run pytest -m live -s`, skipped by default) passed 3 of 3 runs after the prompt was tightened: the agent greets first, takes the complaint from a generated English clip and creates a ticket (about 50 s per run including the scripted yes). Model `gpt-realtime-2.1`, voice `marin`. Not yet tested live: the `end_call` goodbye flow (covered by unit tests only), outbound calls, Kannada/Hindi (task 10).
 
 ---
 
@@ -599,6 +599,8 @@ Result: _(fill in)_
 | | Pinned versions (Pipecat, OpenAI model) | |
 | 2026-11-22 | Pipecat **1.16.0** (`pipecat-ai[openai,websocket,silero]`). It needs `loguru<0.8`, so loguru is pinned `>=0.7.3,<0.8` (0.7.3 installed). `PipelineTask`/`PipelineRunner` are deprecated aliases: use `PipelineWorker` (`pipecat.pipeline.worker`) and `WorkerRunner` (`pipecat.workers.runner`, `add_workers()` then `run()`). | Read installed source; deprecation warnings. |
 | 2026-11-22 | Classes used: `FrameSerializer` (`serialize`/`deserialize`, `_resample_audio_in/out`, `_reset_audio_out`, params `audio_in/out_sample_rate`), `FastAPIWebsocketTransport` + `FastAPIWebsocketParams` (events `on_client_connected`, `on_client_disconnected`), frames `InputAudioRawFrame`, `OutputAudioRawFrame`, `InterruptionFrame`, `OutputTransportMessageFrame`, `OutputTransportMessageUrgentFrame`, `EndFrame`; `PipelineParams(audio_in_sample_rate, audio_out_sample_rate)`. Built-in `ExotelFrameSerializer` and `PlivoFrameSerializer` exist (8 kHz default), which helps the CPaaS move. OpenAI Realtime service is `pipecat.services.openai.realtime.llm.OpenAIRealtimeLLMService` (default model string in Pipecat is `gpt-realtime-2.1`: still to verify in OpenAI docs, task 5). | Read installed source. |
+| 2026-11-22 | OpenAI: the key works; models listed for it include `gpt-realtime-2.1` (used), `gpt-realtime-2.1-mini`, `gpt-realtime-2`, `gpt-realtime-1.5`, `gpt-realtime`, `gpt-realtime-mini`. The user's pasted settings had `OPENAI_REALTIME_MODEL=marin` (a voice, not a model) and TTS keys (`ACTIVE_MODEL`, `TTS_SPEED`) from another project; fixed the model and set voice to `marin`; the TTS keys are ignored (they belong to a cascade). | Models API call, live test. |
+| 2026-11-22 | Live behaviour: first prompt version made the agent recap everything for ~19 s and wait for a yes (2 of 4 early runs timed out). Fixed in `voice/prompts.py`: max 1-2 short sentences per turn, no recap or permission request when details are already given. Pipecat realtime notes: user turns come from OpenAI server VAD; context aggregator auto-enters realtime mode; an `LLMRunFrame` after `ClientConnectedFrame` makes the agent speak first. Latency not measured yet. | Debug logs. |
 | 2026-11-22 | Starlette test client: `ws.receive()` returns a close as a `websocket.close` message instead of raising; use that to assert close codes. | Test debugging. |
 
 ## 7. Decisions log (changes to the plan)

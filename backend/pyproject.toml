@@ -36,6 +36,8 @@ timeout = 30
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = ["live: talks to the real OpenAI API (costs money); run with: pytest -m live"]
 
 [tool.ruff]
 line-length = 100

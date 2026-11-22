@@ -21,6 +21,7 @@ from pipecat.workers.runner import WorkerRunner
 from sqlalchemy.orm import Session, sessionmaker
 
 from carwash_voice.config import Settings
+from carwash_voice.db.session import run_db
 from carwash_voice.domain import calls
 from carwash_voice.logging import call_logging
 from carwash_voice.voice.providers.base import VoiceProvider
@@ -56,6 +57,7 @@ class CallHandle:
         self._end_notice = end_notice
         self._worker: PipelineWorker | None = None
         self.end_reason: str | None = None
+        self.ticket_id: int | None = None  # set by tools; stored on the call at the end
 
     def bind(self, worker: PipelineWorker) -> None:
         self._worker = worker
@@ -80,16 +82,6 @@ class CallHandle:
             await self._worker.cancel(reason=reason)
 
 
-async def _db[T](factory: sessionmaker[Session], fn: Callable[..., T], *args: Any, **kw: Any) -> T:
-    """Run a blocking DB call in a worker thread so audio never stalls."""
-
-    def work() -> T:
-        with factory() as session:
-            return fn(session, *args, **kw)
-
-    return await asyncio.to_thread(work)
-
-
 async def run_call(
     call: CallContext,
     transport: BaseTransport,
@@ -102,7 +94,7 @@ async def run_call(
         logger.info(
             "Call starting ({}, {}, from {})", call.direction, call.source, call.caller_number
         )
-        await _db(
+        await run_db(
             res.session_factory,
             calls.create_call,
             call.call_id,
@@ -112,9 +104,8 @@ async def run_call(
         )
         timer: asyncio.Task[None] | None = None
         try:
-            pipeline = Pipeline(
-                [transport.input(), *res.provider.build(call, handle), transport.output()]
-            )
+            processors = await res.provider.build(call, handle)
+            pipeline = Pipeline([transport.input(), *processors, transport.output()])
             worker = PipelineWorker(
                 pipeline,
                 params=PipelineParams(
@@ -157,7 +148,13 @@ async def run_call(
                 timer.cancel()
             reason = handle.end_reason or "unknown"
             await asyncio.shield(
-                _db(res.session_factory, calls.finalize_call, call.call_id, reason)
+                run_db(
+                    res.session_factory,
+                    calls.finalize_call,
+                    call.call_id,
+                    reason,
+                    ticket_id=handle.ticket_id,
+                )
             )
             logger.info("Call finished: {}", reason)
         return reason

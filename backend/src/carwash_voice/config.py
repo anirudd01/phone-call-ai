@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     business_name: str = "Sparkle Car Wash"
     agent_name: str = "Asha"
     default_language: str = "en-IN"
+    agent_languages: str = "Indian English, Kannada, Hindi, Hinglish (mixed Hindi and English)"
 
     recordings_dir: str = "./data/recordings"
     recording_retention_days: int = 90

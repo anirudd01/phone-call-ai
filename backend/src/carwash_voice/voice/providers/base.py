@@ -16,6 +16,6 @@ if TYPE_CHECKING:
 
 
 class VoiceProvider(Protocol):
-    def build(self, call: CallContext, handle: CallHandle) -> list[FrameProcessor]:
+    async def build(self, call: CallContext, handle: CallHandle) -> list[FrameProcessor]:
         """Return the processors that go between transport.input() and transport.output()."""
         ...

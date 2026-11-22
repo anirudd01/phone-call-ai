@@ -36,5 +36,5 @@ class EchoProvider:
         self._end_after = end_after_frames
         self._end_reason = end_reason
 
-    def build(self, call: CallContext, handle: CallHandle) -> list[FrameProcessor]:
+    async def build(self, call: CallContext, handle: CallHandle) -> list[FrameProcessor]:
         return [EchoProcessor(handle, self._end_after, self._end_reason)]

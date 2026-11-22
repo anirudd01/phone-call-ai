@@ -14,6 +14,7 @@ from carwash_voice.db.migrate import run_migrations
 from carwash_voice.db.session import make_engine, make_session_factory
 from carwash_voice.logging import setup_logging
 from carwash_voice.voice.providers.base import VoiceProvider
+from carwash_voice.voice.providers.openai_realtime import OpenAIRealtimeProvider
 
 
 def create_app(settings: Settings | None = None, provider: VoiceProvider | None = None) -> FastAPI:
@@ -26,6 +27,8 @@ def create_app(settings: Settings | None = None, provider: VoiceProvider | None 
         engine = make_engine(settings.sqlalchemy_url)
         app.state.engine = engine
         app.state.session_factory = make_session_factory(engine)
+        if app.state.provider is None and settings.openai_api_key:
+            app.state.provider = OpenAIRealtimeProvider(settings, app.state.session_factory)
         if settings.run_migrations_on_start:
             logger.info("Running database migrations")
             run_migrations(settings.sqlalchemy_url)
