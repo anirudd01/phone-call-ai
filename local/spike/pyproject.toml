@@ -1,0 +1,22 @@
+[project]
+name = "carwash-spike"
+version = "0.1.0"
+description = "Task 0: Bluetooth hands-free feasibility scripts (local testing only)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "sounddevice>=0.5",
+    "numpy>=2.0",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.8"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC"]

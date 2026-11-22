@@ -1,0 +1,606 @@
+# TASKS: implementation brief and tracker
+
+This file is both the **input prompt** for the coding agent (Claude Sonnet 5.5) and the
+**live tracker**. Read [README.md](README.md) first for the why. Then work through the
+tasks below in order, updating this file as you go.
+
+---
+
+## 1. Your role and how to work
+
+You are implementing a phone-call voice agent for a car-wash business in India. The
+planning (by Opus) and the user's decisions are final and recorded in section 3; do not
+re-open them. If something in this plan turns out to be wrong in practice (an API
+changed, a library class doesn't exist), stop, record what you found in section 6
+("Verified facts / surprises"), and ask the user before changing direction.
+
+Working rules:
+
+1. **One task at a time.** Set its status to `IN PROGRESS`, do it, verify it against its
+   acceptance criteria, then set `DONE` and fill in the "Result" line. Use `BLOCKED` with
+   a reason when you need the user (for example, a hardware step).
+2. **Never guess library APIs.** Pipecat and the OpenAI Realtime API change often. Pin
+   versions in `pyproject.toml` and check class names, constructor arguments and frame
+   types against the installed package source or its official docs before writing code.
+   Record the exact versions and class names you used in section 6.
+3. **Windows first, two machines.** Both laptops run Windows 11 (PowerShell 5.1 and Git
+   Bash) and both have Bluetooth.
+   - **Work laptop:** where you write code, run unit tests and the "laptop mic" mode.
+     **No admin rights**, company policies, sometimes a VPN. No phone pairing here.
+   - **Spare laptop:** the user's own machine, **with admin rights and Docker**. It sits
+     near the phone and runs the Bluetooth bridge and all real phone tests. The user has
+     to switch it on, so the status board's "Where" column says when it is needed; tell
+     the user ahead of time.
+   Code reaches the spare laptop through the GitHub repo (clone/pull there). Every
+   command in docs must work on Windows.
+4. **Use `uv`** for Python environments and dependencies (user-level install, no admin).
+   Python 3.12. Each of `backend/` and `local/bridge/` is its own project with its own
+   `pyproject.toml` and lock file.
+5. **Lint and test before calling anything done:** `ruff check`, `ruff format --check`
+   and `pytest` must pass in each project you touched. Configure Ruff in `pyproject.toml`
+   (line length 100, rules `E,F,W,I,UP,B,SIM,ASYNC`). Type hints everywhere.
+6. **Secrets:** never commit `.env`, keys or tokens. Provide `.env.example` with key names
+   and safe placeholder values only. Never print secret values in logs or docs.
+7. **Git:** the **user sets up git and the GitHub repo**; don't run `git init` or create
+   the remote. **Ask the user before every commit and before pushing.** Branch model:
+   `main` (releases) and `develop` (integration); do work on `feature/<short-name>`
+   branches off `develop`. Never use a `chore/` branch. Write commit messages to a file and use `git commit -F <file>`.
+   Stage files by name (no `git add -A` / `git add .`).
+8. **Keep it simple.** Prototype quality with production habits: clear structure,
+   config via env vars, structured logs, tests for logic. No speculative abstractions
+   beyond those named in this plan (the transport and AI-provider seams are deliberate).
+9. **Keep this file current.** Tick boxes, fill "Result" lines, add decisions and
+   surprises. The user listens to summaries via text-to-speech, so when you report back,
+   write plain full sentences.
+
+---
+
+## 2. Status board
+
+| # | Task | Status | Where | Needs user? |
+|---|---|---|---|---|
+| 0 | Bluetooth bridge feasibility test (scripts + user run) | BLOCKED (scripts done; waiting for user to run on spare laptop) | Work (write) → **Spare** (run) | Yes (hardware) |
+| 1 | Repo scaffolding and tooling (user has set up git) | IN PROGRESS (files done; git steps waiting for user) | Work | Approve commit |
+| 2 | Backend skeleton: config, logging, health, DB models, migrations | TODO | Work | No |
+| 3 | Ticket/customer domain + admin REST API | TODO | Work | No |
+| 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | TODO | Work | No |
+| 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | TODO | Work | API key |
+| 6 | Recording: audio + transcript storage | TODO | Work | No |
+| 7 | Bridge app in `local/` (Windows): audio devices, streaming, operator console | TODO | Work | No |
+| 8 | Local end-to-end: laptop-mic mode, then phone via Bluetooth | TODO | Work, then **Spare** | Yes (testing) |
+| 9 | Outbound update calls (manual dial) | TODO | **Spare** | Yes (testing) |
+| 10 | Language check: English, Kannada, Hindi, Hinglish | TODO | Work (laptop mic) or **Spare** | Yes (listening) |
+| 11 | Railway deployment (Dockerfile, Postgres, volume) | TODO | Work (Docker test on **Spare**) | Yes (Railway account) |
+| 12 | Railway ↔ phone end-to-end | TODO | **Spare** | Yes (testing) |
+| 13 | Hand-off pack for Opus review | TODO | Work | No |
+| — | Phase 1c / phase 2 (outline only, do not start) | PARKED | — | — |
+
+---
+
+## 3. Fixed decisions (from the user, 2026-11-22)
+
+| Topic | Decision |
+|---|---|
+| Country / users | India. Customers call an Indian mobile SIM (SIM 2 of the user's Android phone). |
+| Phone → backend | Bluetooth hands-free bridge on the **spare Windows laptop**, using Windows' own Bluetooth hands-free audio devices. **No Windows Phone Link app**, ever. Run the bridge as plain Windows Python, not in Docker or WSL (containers can't reach the laptop's Bluetooth). If task 0 fails, stop and ask the user (see task 0). |
+| Purpose of the bridge | **Local testing only**: to see that the phone flow works and get a feel for the agent. The real, long-term phone path is a CPaaS (phase 2). |
+| Code layout | Everything specific to the Bluetooth bridge lives in a top-level **`local/`** folder (bridge app, spike scripts, its docs), plus the backend's adapter for it in `backend/src/carwash_voice/transports/local/`. Nothing outside these two places may import from them, so they can be deleted later without touching the rest. The real call path (CPaaS transports, agent, tools, data) goes in the normal backend structure. |
+| Machines | Work laptop: coding, unit tests, laptop-mic mode. Spare laptop (admin + Docker): Bluetooth bridge and all phone tests; can also run the backend natively or in Docker. |
+| Git | The user sets up git and the GitHub repo. |
+| Call answering / dialling | **Manual in phase 1.** The user taps Answer or dials on the phone itself. The bridge operator console tells the backend when a call starts and ends. |
+| AI voice | **OpenAI Realtime speech-to-speech** through Pipecat, behind a provider seam so Gemini Live or an STT→LLM→TTS cascade can be swapped in. |
+| Backend stack | Python 3.12, FastAPI, Pipecat, SQLAlchemy 2 + Alembic, pydantic-settings. |
+| Languages | Primary **English (Indian)** and **Kannada**; also Hindi and Hinglish. Tamil, Telugu, Marathi later. The agent answers in the language the customer uses. |
+| Scope | Inbound complaint → ticket; ticket status lookup; outbound update calls; human handoff request (ticket flagged *callback requested*). |
+| Tickets | Built in this repo: SQLite locally, Postgres on Railway. |
+| Customer identity | No customer list yet. Use caller number when known, ask name, car registration, wash location and date; upsert a customer record. |
+| Storage per call | **Audio + transcript + ticket.** Agent announces recording at the start of each call. |
+| Persona | Config placeholders: `BUSINESS_NAME="Sparkle Car Wash"`, `AGENT_NAME="Asha"`. |
+| Hosting path | Laptop → Railway (pick an Asia region, e.g. Singapore, if available) → Railway + CPaaS; VPS if Railway is unsuitable. |
+| Out of scope now | Call summaries for human agents, notifications, Android companion app, CPaaS. |
+
+---
+
+## 4. Target architecture (build to this)
+
+### 4.1 Components
+
+```
+local/bridge (Windows, spare laptop)               backend (FastAPI + Pipecat)
+────────────────────────────────────               ───────────────────────────
+audio in  (BT hands-free mic = caller voice) ──►   /ws/local-bridge (one WebSocket per call)
+audio out (BT hands-free speaker = to caller) ◄──    └─ transports/local: serializer
+operator console (keys: answer/outbound/end)          └─ Pipecat pipeline per call
+REST poll: queued outbound jobs           ──►            ├─ OpenAI Realtime (S2S + tools)
+                                                         ├─ tool handlers → domain services
+                                                         └─ AudioBufferProcessor → recordings
+                                                   /api/... admin REST (tickets, jobs, calls)
+                                                   /healthz
+                                                   DB: SQLite (dev) / Postgres (Railway)
+```
+
+### 4.2 Repository layout
+
+```
+backend/
+  pyproject.toml, uv.lock, .env.example, Dockerfile, alembic.ini
+  src/carwash_voice/
+    main.py                 FastAPI app factory, routers, lifespan
+    config.py               pydantic-settings Settings
+    logging.py              loguru setup, call_id correlation
+    db/                     engine/session, models.py, alembic migrations
+    domain/                 customers.py, tickets.py, calls.py, outbound.py (pure services)
+    api/                    admin.py (REST), health.py, deps.py (auth)
+    transports/
+      local/                           LOCAL TESTING ONLY: /ws/local-bridge endpoint and
+                                       serializer for the Bluetooth bridge's wire format
+      (exotel/ or plivo/ in phase 2)   real CPaaS transports
+    voice/
+      providers/base.py                provider seam (build_llm_service(settings, tools))
+      providers/openai_realtime.py
+      prompts.py                       system prompt builder (persona, languages, mode)
+      tools.py                         tool schemas + handlers calling domain services
+      session.py                       builds and runs one call's pipeline
+      recording.py                     audio/transcript persistence
+    storage/                local.py (folder); interface ready for S3-compatible later
+  tests/
+local/                      LOCAL TESTING ONLY: phone <-> Bluetooth <-> Windows bridge
+  README.md                 what this folder is, that it is throwaway test tooling
+  spike/                    task 0 scripts (list devices, record, play, loopback)
+  bridge/
+    pyproject.toml, uv.lock, .env.example
+    src/carwash_bridge/
+      main.py               CLI entry (typer or argparse)
+      devices.py            list/select audio devices by name substring
+      audio_io.py           capture/playback with sounddevice, resampling (soxr)
+      ws_client.py          WebSocket client, reconnects, protocol
+      console.py            operator keys and prompts
+      config.py
+    tests/
+  docs/
+    spike-bluetooth.md      task 0 steps and results
+    bridge-protocol.md      the wire protocol (section 4.3), kept in sync with code
+    runbook-bridge.md       pairing, running the bridge, troubleshooting
+docs/
+  runbook-local.md          running the backend on the laptops
+  runbook-railway.md        how to deploy
+  decisions.md              short ADR-style notes for any change of plan
+```
+
+### 4.3 Bridge ↔ backend wire protocol (v1)
+
+This protocol exists only for the local Bluetooth bridge. Its backend side lives in
+`transports/local/`; the rest of the backend must not depend on it.
+
+- Endpoint: `ws(s)://<host>/ws/local-bridge`. Auth: header `Authorization: Bearer <BRIDGE_TOKEN>`;
+  reject with close code 4401 if missing or wrong. Never put the token in the URL.
+- One WebSocket **per call**. The bridge opens it when the operator starts a call and
+  closes it when the call ends.
+- **Binary frames** = audio: PCM signed 16-bit little-endian, mono, **16 000 Hz**, 20 ms
+  per frame (640 bytes). Both directions.
+- **Text frames** = JSON control messages:
+
+| Direction | Message | Meaning |
+|---|---|---|
+| bridge → backend | `{"type":"start","protocol":1,"call_id":"<uuid4>","direction":"inbound"\|"outbound","caller_number":"+91..."\|null,"outbound_job_id":"<id>"\|null,"bridge_id":"spare-laptop"}` | First message. Backend creates the call record and starts the pipeline. |
+| bridge → backend | `{"type":"stop","reason":"operator_hangup"\|"remote_hangup"\|"error"}` | Call ended on the phone side. |
+| bridge → backend | `{"type":"mark","name":"..."}` | Optional debug marker, logged only. |
+| backend → bridge | `{"type":"ready","call_id":"..."}` | Pipeline is running; bridge starts sending audio. |
+| backend → bridge | `{"type":"clear"}` | Customer interrupted the agent: flush the playback buffer immediately. |
+| backend → bridge | `{"type":"end_call","reason":"..."}` | Agent finished. Bridge tells the operator to hang up (phase 1 can't hang up programmatically), then sends `stop` and closes. |
+| backend → bridge | `{"type":"error","message":"..."}` | Fatal problem; bridge shows it and closes. |
+
+Write this into `local/docs/bridge-protocol.md` and implement it with a Pipecat custom
+`FrameSerializer` in `transports/local/` (check the base class and frame names in the
+pinned Pipecat version; the built-in Twilio/Exotel/Plivo serializers are good
+references). Call setup, the pipeline and tools in `voice/` must take a transport from
+outside, so phase 2 can add `transports/exotel/` or `transports/plivo/` with Pipecat's
+provider serializers without touching `voice/`.
+
+### 4.4 Data model (first cut)
+
+- `customers`: id, phone (E.164, nullable, unique when present), name, car_registration,
+  preferred_language, created_at, updated_at.
+- `tickets`: id, public_ref (human-friendly, e.g. `CW-24871`, short enough to say on the
+  phone), customer_id, category (`quality`, `damage`, `billing`, `booking`, `other`),
+  description, wash_location, wash_date, status (`open`, `in_progress`,
+  `callback_requested`, `resolved`, `closed`), priority, created_via (`phone_inbound`,
+  `phone_outbound`, `api`), created_at, updated_at.
+- `ticket_events`: id, ticket_id, kind (`created`, `status_changed`, `note`,
+  `callback_requested`, `customer_updated`), detail, actor (`agent`, `staff`), created_at.
+- `calls`: id (= call_id uuid), direction, caller_number, started_at, ended_at,
+  end_reason, language_detected, ticket_id (nullable), outbound_job_id (nullable),
+  audio_path, transcript (JSON list of `{role, text, ts}`), summary (nullable, unused for now).
+- `outbound_jobs`: id, customer_id, ticket_id (nullable), phone, purpose
+  (`ticket_update`, `follow_up`), message (what the agent must convey), status (`queued`,
+  `dialling`, `completed`, `no_answer`, `failed`), outcome_note, created_at, updated_at.
+
+### 4.5 Agent tools (function calling)
+
+All tool handlers call domain services (no SQL in `voice/`). Validate inputs; return
+short, speakable results. Tools:
+
+| Tool | Purpose |
+|---|---|
+| `find_customer(phone?, car_registration?)` | Look up an existing customer. |
+| `upsert_customer(name, phone?, car_registration?, preferred_language?)` | Create or update. |
+| `create_ticket(customer_id, category, description, wash_location?, wash_date?)` | Returns `public_ref`. |
+| `get_ticket_status(public_ref? , phone?)` | Status of a ticket, or the latest open tickets for a phone. |
+| `add_ticket_note(public_ref, note)` | Extra details given later in the call. |
+| `request_human_callback(public_ref, reason, preferred_time?)` | Sets `callback_requested`. |
+| `complete_outbound_job(job_id, outcome, note?)` | Outbound mode only. |
+| `end_call(reason)` | Agent says goodbye first, then backend sends `end_call` to the bridge. |
+
+### 4.6 Persona and prompt rules
+
+- Open with: greeting with business and agent name, recording notice, then "How can I
+  help?". Keep the recording notice short.
+- Mirror the customer's language (English, Kannada, Hindi, Hinglish). If unclear, ask
+  once: "Would you prefer English or Kannada?"
+- Short spoken sentences; confirm critical details (phone number, car registration,
+  ticket number) by reading them back; spell ticket refs clearly.
+- Never invent ticket statuses or promises (refund amounts, times). If unsure, offer a
+  human callback.
+- Outbound mode: say who is calling and why, deliver the job's `message`, answer
+  questions, record the outcome with `complete_outbound_job`.
+- Prompt text lives in `voice/prompts.py`, built from settings (business name, agent
+  name, languages) and call mode, so it can be tuned without code changes elsewhere.
+
+### 4.7 Configuration (backend `.env.example` keys)
+
+`APP_ENV`, `LOG_LEVEL`, `DATABASE_URL` (default `sqlite:///./data/dev.db`; convert
+Railway's `postgresql://` to the driver URL in code), `OPENAI_API_KEY`,
+`OPENAI_REALTIME_MODEL` (look up the current model name in OpenAI's docs; don't guess),
+`OPENAI_REALTIME_VOICE`, `BRIDGE_TOKEN`, `ADMIN_API_KEY`, `BUSINESS_NAME`, `AGENT_NAME`,
+`DEFAULT_LANGUAGE`, `RECORDINGS_DIR` (default `./data/recordings`), `RECORDING_RETENTION_DAYS`,
+`MAX_CALL_SECONDS` (safety cap, e.g. 900), `PORT` (Railway sets it).
+
+Bridge `.env.example` (in `local/bridge/`): `BACKEND_WS_URL`, `BACKEND_HTTP_URL`, `BRIDGE_TOKEN`, `BRIDGE_ID`,
+`IN_DEVICE` and `OUT_DEVICE` (name substrings), `AUDIO_MODE` (`bluetooth` | `laptop`).
+
+---
+
+## 5. Tasks
+
+### Task 0: Bluetooth bridge feasibility test — `BLOCKED` (needs user's hardware run)
+
+**Goal:** prove that the spare Windows laptop can (a) hear the remote caller and (b) send
+audio the caller hears, during a real SIM call, using only Windows' own Bluetooth
+hands-free support. **No Windows Phone Link app**, no root. This decides go/no-go for
+the local bridge.
+
+You write the scripts and the instructions on the work laptop; the user runs them on the
+spare laptop with the phone. You can build tasks 1–6 while waiting for the result.
+
+Deliverables in `local/spike/` plus `local/docs/spike-bluetooth.md`:
+- [x] `list_devices.py`: prints every audio device with index, host API (prefer WASAPI),
+      channels and default sample rate. Highlights names containing "Hands-Free", "AG
+      Audio" or the phone's name.
+- [x] `record_call.py --device <substr> --seconds 15 --out caller.wav`: records from the
+      chosen input during a call.
+- [x] `play_into_call.py --device <substr> --wav prompt.wav`: plays a WAV (include a
+      short spoken test clip or generate a tone sequence) into the chosen output.
+- [x] `loopback_test.py`: records 5 s from the call, then plays it back into the call
+      (caller hears themselves): a single combined check.
+- [x] `local/docs/spike-bluetooth.md`: step-by-step for the user, in plain language:
+      1. On the spare laptop, clone the repo and install Python 3.12 and `uv` (native
+         Windows, not Docker or WSL).
+      2. Make sure Phone Link is not handling calls: if it is installed, sign out or turn
+         off its calls feature so it doesn't grab the call audio.
+      3. Pair the phone with the laptop in Windows Bluetooth settings; on the phone,
+         allow "Phone calls" for this device.
+      4. Place a call from another phone to SIM 2 and answer it on the phone. Check the
+         call audio moves to the laptop (on the phone's call screen, choose the laptop
+         as the audio output if needed).
+      5. Run `list_devices.py` before and during the call; note which devices appear
+         only during the call. Then run the record, play and loopback scripts.
+      6. Record the results in the table below.
+      Also note: if Windows only exposes the call audio while some app holds the
+      hands-free microphone open, say so (the bridge would then need to open the mic
+      first to trigger the call audio link).
+- [ ] Fill the result table and the go/no-go decision.
+
+| Check | Result |
+|---|---|
+| Input device name / host API / sample rate | |
+| Output device name / host API / sample rate | |
+| Bridge hears the caller clearly | |
+| Caller hears bridge audio clearly | |
+| Audio quality (8 kHz narrowband or 16 kHz wideband) | |
+| Noticeable echo / delay | |
+| Anything that needed admin rights | |
+
+**Go/no-go:** if it doesn't work, stop and ask the user. Their stated preference is to
+move to an Indian CPaaS (Exotel or Plivo); the backend tasks still apply, only the
+transport changes. A heavier alternative they may choose is booting Linux from a USB
+stick on the spare laptop and using the Linux Bluetooth stack (BlueZ with PipeWire or
+oFono), which is a better-documented hands-free setup. Don't attempt Docker or WSL for
+Bluetooth: they need a custom Linux kernel and USB passthrough of the Bluetooth adapter.
+
+Result: scripts and instructions written and lint-clean in `local/spike/` (own `pyproject.toml`; `list_devices.py` runs on the work laptop). Waiting for the user to run them on the spare laptop and fill in the table in `local/docs/spike-bluetooth.md`.
+
+---
+
+### Task 1: Repo scaffolding, git, tooling — `IN PROGRESS`
+
+- [ ] The user has set up git and the GitHub repo. Check `git status` and the branches;
+      if `develop` doesn't exist yet, ask the user before creating it. Work on
+      `feature/scaffold` off `develop`.
+- [x] Root `.gitignore` covering `.env`, `*.db`, `data/`, `recordings/`, `.venv/`,
+      `__pycache__/`, `.ruff_cache/`, `.pytest_cache/`, `*.wav` outside `tests/fixtures/`.
+- [x] `backend/` and `local/bridge/` projects created with `uv init`, Python 3.12 pinned,
+      Ruff + pytest + pytest-asyncio as dev dependencies, Ruff config per section 1.
+- [x] `.env.example` in both projects (keys from section 4.7, placeholder values).
+- [x] `.gitattributes` with `* text=auto eol=lf` (except `*.ps1` / `*.bat`: `eol=crlf`).
+- [x] Short `docs/runbook-local.md` stub with the uv commands that worked on Windows.
+- [x] `local/README.md` explaining that the folder is local test tooling only (Bluetooth
+      bridge), and that the real call path is the CPaaS transport in the backend.
+- [ ] Ask the user, then make the first commit. Ask before pushing.
+
+Acceptance: `uv run ruff check`, `uv run ruff format --check` and `uv run pytest` (with a
+trivial test) pass in both projects on Windows.
+
+Result: all files created; `ruff check`, `ruff format --check` and `pytest` pass in `backend/` and `local/bridge/` (and ruff in `local/spike/`). Not done: git checks and first commit, because the folder is not a git repository yet (user sets it up).
+
+---
+
+### Task 2: Backend skeleton — `TODO`
+
+- [ ] `config.py` with pydantic-settings; fail fast with a clear message if required
+      keys are missing (`OPENAI_API_KEY` only required when a call starts, so the API and
+      tests run without it).
+- [ ] Logging with loguru (Pipecat already uses it): JSON lines in Railway, readable
+      locally; bind `call_id` to every log line inside a call.
+- [ ] SQLAlchemy 2 models from section 4.4, Alembic set up with an initial migration;
+      works on SQLite and Postgres (avoid SQLite-only or Postgres-only types; use
+      `JSON` and string enums).
+- [ ] `GET /healthz` returns status and DB connectivity.
+- [ ] App factory, lifespan that runs migrations on start (configurable).
+
+Acceptance: `uv run uvicorn carwash_voice.main:app` starts on Windows, `/healthz` is OK,
+migrations create the tables in SQLite, tests cover config and health.
+
+Result: _(fill in)_
+
+---
+
+### Task 3: Domain services + admin REST API — `TODO`
+
+- [ ] Domain services for customers, tickets (with `public_ref` generation that is
+      unique, short and easy to say), ticket events, calls, outbound jobs.
+- [ ] Phone numbers normalised to E.164 with India as default region (use the
+      `phonenumbers` library).
+- [ ] Admin REST under `/api`, protected by header `X-Admin-Key`:
+      list/get/update tickets (status changes write a `ticket_events` row), list
+      tickets with `status=callback_requested`, get customer, list calls with transcript,
+      download a call's audio, create/list outbound jobs.
+- [ ] Bridge-facing `GET /api/bridge/outbound-jobs/next` and
+      `POST /api/bridge/outbound-jobs/{id}/status`, protected by the bridge token.
+- [ ] Tests for every service function and endpoint (SQLite in a temp dir).
+
+Acceptance: tests pass; OpenAPI docs at `/docs` show all endpoints.
+
+Result: _(fill in)_
+
+---
+
+### Task 4: Local-bridge protocol, serializer, call session lifecycle — `TODO`
+
+- [ ] `local/docs/bridge-protocol.md` from section 4.3.
+- [ ] In `transports/local/`: `LocalBridgeFrameSerializer` (Pipecat `FrameSerializer`
+      subclass): binary → input audio
+      frames at 16 kHz mono; output audio frames → binary (resample to 16 kHz if the
+      pipeline's output rate differs); interruption frame → `{"type":"clear"}`;
+      end-of-call → `{"type":"end_call"}`. Verify frame class names in the pinned version.
+- [ ] `/ws/local-bridge` endpoint (in `transports/local/`): auth check, wait for `start`
+      (timeout 5 s), then hand over to the transport-neutral call session in
+      `voice/session.py`, which creates the `calls` row, builds the pipeline, runs until
+      `stop`, disconnect, `end_call` or `MAX_CALL_SECONDS`, and always finalises the call
+      row. The local transport sends `ready` once the pipeline is running.
+- [ ] Route registration for `transports/local/` sits behind a setting
+      (`ENABLE_LOCAL_BRIDGE`, default true in dev) so it can be switched off on Railway
+      once CPaaS is live.
+- [ ] Pipeline factory is injectable so tests can replace the AI provider with a fake
+      that echoes audio or emits canned frames.
+- [ ] Tests: protocol happy path, bad token (4401), missing `start`, abrupt disconnect
+      still finalises the call row; a test client streams a WAV fixture and receives audio.
+
+Acceptance: the fake-provider WebSocket tests pass without network access.
+
+Result: _(fill in)_
+
+---
+
+### Task 5: Voice agent (OpenAI Realtime) — `TODO`
+
+- [ ] Provider seam `providers/base.py` and the OpenAI Realtime implementation using
+      Pipecat's OpenAI Realtime service (check its current class name and session
+      config). Use server-side voice activity detection and enable interruptions.
+- [ ] Prompt builder per section 4.6, separate inbound and outbound variants; outbound
+      variant includes the job's customer name, ticket ref and message.
+- [ ] Tools per section 4.5 with JSON schemas and handlers; handlers run DB work off the
+      event loop (async session or thread) so audio never stalls.
+- [ ] `end_call` flow: agent speaks goodbye, waits for that audio to finish playing, then
+      the backend sends `end_call`.
+- [ ] A live smoke test (`pytest -m live`, skipped by default) that opens a real
+      session with a WAV of a short English complaint and asserts a ticket was created.
+
+Acceptance: unit tests for tools and prompt builder pass; the live smoke test passes when
+the user provides `OPENAI_API_KEY` (ask them to run it or to put the key in `.env`).
+
+Result: _(fill in)_
+
+---
+
+### Task 6: Recording — `TODO`
+
+- [ ] Record both sides with Pipecat's audio buffer processor; save a WAV per call
+      (stereo: left caller, right agent, if supported; otherwise mixed mono) under
+      `RECORDINGS_DIR/<yyyy>/<mm>/<call_id>.wav`; store the path on the call row.
+- [ ] Transcript: collect user and assistant transcription events from the Realtime
+      service into `calls.transcript` with timestamps.
+- [ ] Storage behind a small interface (`save(call_id, bytes) -> path`, `open(path)`) so
+      an S3-compatible store can be added later; implement local only.
+- [ ] Retention: a CLI command `uv run carwash-voice purge-recordings` deleting audio
+      older than `RECORDING_RETENTION_DAYS`.
+
+Acceptance: a fake-provider test call produces a WAV and a transcript row.
+
+Result: _(fill in)_
+
+---
+
+### Task 7: Bridge app in `local/bridge/` (Windows) — `TODO`
+
+- [ ] `carwash-bridge devices`: list devices (reuse task 0 code from `local/spike/`).
+- [ ] `carwash-bridge run`: operator console loop:
+      - `a` = inbound call answered (prompt for optional caller number, Enter to skip),
+      - `o` = fetch next outbound job, show "Dial <number> on SIM 2, press Enter when
+        they answer", mark job `dialling`, then start the call,
+      - `e` = call ended (sends `stop`), `q` = quit.
+      Show clear status lines (connected, agent speaking, `end_call` received → "Agent
+      finished, please hang up the phone, then press e").
+- [ ] Audio: capture from `IN_DEVICE`, play to `OUT_DEVICE` via `sounddevice` (WASAPI),
+      at the device's native rate; resample to/from 16 kHz with `soxr`; 20 ms frames;
+      playback jitter buffer (~60–100 ms) that is flushed on `clear`.
+- [ ] `AUDIO_MODE=laptop` uses the default mic and speakers so anyone can test the bot
+      on a laptop with a headset, no phone needed (use a headset to avoid echo).
+- [ ] WebSocket client with auth header, ping/keepalive, clean shutdown, clear errors if
+      the backend is down. Never log the token.
+- [ ] Tests: framing and resampling, protocol handling with a fake server.
+
+Acceptance: laptop mode talks to a local backend running the fake provider (audio echo)
+and to the real provider.
+
+Result: _(fill in)_
+
+---
+
+### Task 8: Local end-to-end — `TODO`
+
+- [ ] Laptop mode on the work laptop: backend and bridge both on localhost, talk to the
+      agent through a headset, create a ticket, check it via the admin API.
+- [ ] Phone mode on the **spare laptop** (tell the user beforehand): backend and bridge
+      both on the spare laptop (localhost, avoids firewall changes; the backend may run
+      natively or in Docker there, the bridge always natively). Call SIM 2 from another
+      phone, answer, press `a`, run the complaint flow, then the status lookup flow, then
+      a human-handoff request.
+- [ ] Write `docs/runbook-local.md` (backend) and `local/docs/runbook-bridge.md` (pairing,
+      bridge, troubleshooting) fully.
+- [ ] Record latency observations (time from caller stopping speaking to agent audio)
+      and any audio quality issues in section 6.
+
+Acceptance: all three inbound flows work on a real phone call; tickets, transcripts and
+audio are stored.
+
+Result: _(fill in)_
+
+---
+
+### Task 9: Outbound update calls — `TODO`
+
+- [ ] Admin API creates an outbound job for an existing ticket with a message.
+- [ ] Bridge `o` flow: operator dials manually, presses Enter when answered; agent runs
+      the outbound prompt, delivers the message, answers questions, calls
+      `complete_outbound_job`; job status and ticket events update.
+- [ ] Handle "no answer" (operator marks it from the console) and "customer busy, call
+      later" (agent records outcome and suggested time).
+
+Acceptance: one real outbound call completes and the job, call and ticket rows reflect it.
+
+Result: _(fill in)_
+
+---
+
+### Task 10: Language check — `TODO`
+
+- [ ] With the user, run short scripted calls in English, Kannada, Hindi and Hinglish
+      (write the scripts in `docs/language-test.md`). The user judges understanding,
+      pronunciation and naturalness on a 1–5 scale; record scores and notes.
+- [ ] If Kannada is poor, write up options in `docs/decisions.md` for the user to choose
+      (for example: Gemini Live, or a cascade of an Indian STT/TTS provider such as
+      Sarvam AI with an LLM in the middle) with what each would change in the code. Do
+      not switch provider without the user's decision.
+
+Acceptance: score table filled; decision recorded.
+
+Result: _(fill in)_
+
+---
+
+### Task 11: Railway deployment — `TODO`
+
+- [ ] `backend/Dockerfile` (multi-stage with uv, non-root user, listens on `$PORT`),
+      `railway.json` (or `railway.toml`) with health check `/healthz`.
+- [ ] Railway Postgres; `DATABASE_URL` handled; migrations run on deploy.
+- [ ] Railway volume mounted for `RECORDINGS_DIR` (container disk is ephemeral).
+- [ ] Region: an Asia region if offered (check Railway's current list).
+- [ ] Variables set in Railway (names only in docs; the user enters values).
+- [ ] `docs/runbook-railway.md`: create project, add Postgres and volume, set variables,
+      deploy from GitHub, check logs, roll back.
+- [ ] Ask the user before anything that creates paid resources.
+
+Acceptance: `/healthz` OK on the Railway URL; laptop-mode bridge on the work laptop holds
+a conversation with the Railway backend over `wss://`.
+
+Result: _(fill in)_
+
+---
+
+### Task 12: Railway ↔ phone end-to-end — `TODO`
+
+- [ ] Spare-laptop bridge points at the Railway backend; repeat task 8 phone flows and
+      one outbound call.
+- [ ] Compare latency with the local run; note it in section 6.
+- [ ] Decide with the user whether Railway is suitable or a VPS is needed; record in
+      `docs/decisions.md`.
+
+Acceptance: all phase 1 flows work through Railway on a real phone call.
+
+Result: _(fill in)_
+
+---
+
+### Task 13: Hand-off pack for Opus review — `TODO`
+
+- [ ] README "Setup and run" section filled in.
+- [ ] Section 6 below complete (versions, class names, surprises, open risks).
+- [ ] List of known limitations and the phase 2 plan updated.
+- [ ] All lint and tests green; summary of test coverage by area.
+- [ ] Tell the user the branch is ready for an Opus review against `develop`.
+
+Result: _(fill in)_
+
+---
+
+### Parked: phase 1c and phase 2 (outline, do not start)
+
+- **1c Companion Android app (Kotlin, no root):** foreground service with
+  `ANSWER_PHONE_CALLS` / `CALL_PHONE`; auto-answer calls on SIM 2, dial on command from
+  the backend using SIM 2's phone account, report caller number and call state to the
+  backend. Removes the manual operator steps.
+- **2 CPaaS:** Indian provider (Exotel or Plivo; compare KYC, number cost, per-minute
+  price, bidirectional media streaming). Add `/ws/<provider>` using Pipecat's provider
+  serializer; inbound webhook to start the stream; outbound calls through the provider's
+  API; concurrent calls. Optionally forward SIM 2 to the CPaaS number during migration.
+- **Later:** call summaries for human agents, staff notifications (WhatsApp/email),
+  Tamil/Telugu/Marathi, an S3-compatible recording store, a small staff web page.
+
+---
+
+## 6. Verified facts / surprises (fill in as you go)
+
+| Date | Fact or surprise | Source / how verified |
+|---|---|---|
+| 2026-11-22 | Third-party Android apps can't capture SIM call audio (needs privileged `CAPTURE_AUDIO_OUTPUT`); no public API to inject audio into a call. Root-free SIM-to-SIP apps were not found. | Android developer docs; gsm2sip README (needs root). |
+| 2026-11-22 | Windows exposes Bluetooth HFP as a "Hands-Free" input/output endpoint pair that apps can open; not yet proven for capturing the remote side of a phone call. | Microsoft Bluetooth classic audio docs. Task 0 verifies. |
+| 2026-11-22 | Work laptop: Python 3.12.10 via `py -3.12`; `uv` was missing, installed with `py -3.12 -m pip install --user uv` (uv 0.13.9, Scripts folder not on PATH, so run `py -3.12 -m uv ...`). Ruff 0.17.6. Pipecat/OpenAI/FastAPI versions not pinned yet (task 2 onward). | Ran the commands. |
+| | Pinned versions (Pipecat, OpenAI model, FastAPI, SQLAlchemy) | |
+| | Pipecat class names actually used | |
+
+## 7. Decisions log (changes to the plan)
+
+| Date | Decision | Why | Approved by |
+|---|---|---|---|
+| 2026-11-22 | Initial plan (section 3) | User answers to planning questions | User |
+| 2026-11-22 | No Windows Phone Link; Bluetooth bridge code in `local/` (+ `transports/local/`); spare laptop runs phone tests; user sets up git | User follow-up | User |
