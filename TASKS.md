@@ -8,7 +8,7 @@ tasks below in order, updating this file as you go.
 
 ## 0. Current state: read this first after a context reset
 
-**Last updated:** 2026-11-22. Tasks 1 to 6 are done, Task 0 parked; **next is Task 7** (laptop-mic bridge). Provider research is in `docs/research-cpaas-exotel-vs-plivo.md` (recommends Plivo if the business has a GST/Udyam/incorporation document, else Exotel); the owner still has to choose. Git is now a single branch, `main`.
+**Last updated:** 2026-11-22. Tasks 1 to 7 are done (7 needs the user's listening test), Task 0 parked; **provider chosen: Plivo (Udyam registered); next is the Plivo transport**. Git: commit and push straight to `main`, no branches. Provider research is in `docs/research-cpaas-exotel-vs-plivo.md` (recommends Plivo if the business has a GST/Udyam/incorporation document, else Exotel); the owner still has to choose. Git is now a single branch, `main`.
 
 **Direction change:** the phone path is now a **CPaaS** (Exotel or Plivo), not the Bluetooth
 bridge. Task 0 is parked after two failed attempts on the spare laptop (the phone keeps
@@ -123,7 +123,7 @@ Working rules:
 | 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | DONE | Work | No |
 | 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | DONE | Work | API key |
 | 6 | Recording: audio + transcript storage | DONE | Work | No |
-| 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | TODO (**next**) | Work | No |
+| 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | DONE (code and tests; needs a headset try-out) | Work | No |
 | 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | TODO | Work, then **Spare** | Yes (testing) |
 | 9 | Outbound update calls (re-scope with CPaaS: provider API dials) | TODO | **Spare** | Yes (testing) |
 | 10 | Language check: English, Kannada, Hindi, Hinglish | TODO | Work (laptop mic) or **Spare** | Yes (listening) |
@@ -518,29 +518,35 @@ call.
 
 ---
 
-### Task 7: Bridge app in `local/bridge/` (Windows) — `TODO`
+### Task 7: Bridge app in `local/bridge/` (Windows) — `DONE`
 
-- [ ] `carwash-bridge devices`: list devices (reuse task 0 code from `local/spike/`).
-- [ ] `carwash-bridge run`: operator console loop:
+- [x] `carwash-bridge devices`: list devices (reuse task 0 code from `local/spike/`).
+- [x] `carwash-bridge run`: operator console loop:
       - `a` = inbound call answered (prompt for optional caller number, Enter to skip),
       - `o` = fetch next outbound job, show "Dial <number> on SIM 2, press Enter when
         they answer", mark job `dialling`, then start the call,
       - `e` = call ended (sends `stop`), `q` = quit.
       Show clear status lines (connected, agent speaking, `end_call` received → "Agent
       finished, please hang up the phone, then press e").
-- [ ] Audio: capture from `IN_DEVICE`, play to `OUT_DEVICE` via `sounddevice` (WASAPI),
+- [x] Audio: capture from `IN_DEVICE`, play to `OUT_DEVICE` via `sounddevice` (WASAPI),
       at the device's native rate; resample to/from 16 kHz with `soxr`; 20 ms frames;
       playback jitter buffer (~60–100 ms) that is flushed on `clear`.
-- [ ] `AUDIO_MODE=laptop` uses the default mic and speakers so anyone can test the bot
+- [x] `AUDIO_MODE=laptop` uses the default mic and speakers so anyone can test the bot
       on a laptop with a headset, no phone needed (use a headset to avoid echo).
-- [ ] WebSocket client with auth header, ping/keepalive, clean shutdown, clear errors if
+- [x] WebSocket client with auth header, ping/keepalive, clean shutdown, clear errors if
       the backend is down. Never log the token.
-- [ ] Tests: framing and resampling, protocol handling with a fake server.
+- [x] Tests: framing and resampling, protocol handling with a fake server.
 
 Acceptance: laptop mode talks to a local backend running the fake provider (audio echo)
 and to the real provider.
 
-Result: _(fill in)_
+Result: done in code. `local/bridge/src/carwash_bridge/`: `audio.py` (framer, soxr resampler, jitter
+buffer), `client.py` (protocol v1 client with clear error messages), `audio_io.py` (sounddevice),
+`app.py` (console: a, o, e, q), `cli.py` (`carwash-bridge devices|run`). 12 offline tests pass,
+Ruff clean, `devices` lists this laptop's devices. NOT tried with a real microphone yet: the user
+should follow `docs/runbook-local.md` and report echo, latency and audio quality. The websockets
+17 connection has `close_code`, not `rcvd`.
+
 
 ---
 
