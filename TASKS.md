@@ -125,7 +125,7 @@ Working rules:
 | 6 | Recording: audio + transcript storage | DONE | Work | No |
 | 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | DONE (code and tests; needs a headset try-out) | Work | No |
 | 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | TODO | Work, then **Spare** | Yes (testing) |
-| 9 | Outbound update calls (re-scope with CPaaS: provider API dials) | TODO | **Spare** | Yes (testing) |
+| 9 | Outbound update calls via the Plivo API | CODE DONE (untested on real Plivo) | **Spare** | Yes (testing) |
 | 10 | Language check: English, Kannada, Hindi, Hinglish | TODO | Work (laptop mic) or **Spare** | Yes (listening) |
 | 11 | Railway deployment (Dockerfile, Postgres, volume) | TODO | Work (Docker test on **Spare**) | Yes (Railway account) |
 | 12 | Railway ↔ phone end-to-end (re-scope: via CPaaS number) | TODO | **Spare** | Yes (testing) |
@@ -571,7 +571,7 @@ Result: _(fill in)_
 
 ---
 
-### Task 9: Outbound update calls — `TODO`
+### Task 9: Outbound update calls — `CODE DONE`
 
 - [ ] Admin API creates an outbound job for an existing ticket with a message.
 - [ ] Bridge `o` flow: operator dials manually, presses Enter when answered; agent runs
@@ -582,7 +582,16 @@ Result: _(fill in)_
 
 Acceptance: one real outbound call completes and the job, call and ticket rows reflect it.
 
-Result: _(fill in)_
+Re-scoped (Plivo, not the bridge): `POST /api/outbound-jobs/{id}/dial` (admin key) marks the
+job dialling and asks Plivo (`transports/plivo/dialer.py`, httpx, fields confirmed from the
+installed `plivo` SDK) to call the customer with answer URL `/plivo/answer?job_id=<id>` and hangup URL
+`/plivo/hangup?job_id=<id>`. The hangup webhook (signature checked) marks unanswered/busy/failed
+calls `no_answer`/`failed`. An answered call finishes through the agent's
+`complete_outbound_job`. Also fixed: `GET /api/calls/{id}/audio` now resolves the relative
+recording path. 104 offline tests pass. Still to verify live: one real outbound call end to
+end (the acceptance), Plivo's real response and form fields, calling hours policy (none
+enforced yet; research says service calls have no TRAI time limit but avoid late-night calls).
+
 
 ---
 

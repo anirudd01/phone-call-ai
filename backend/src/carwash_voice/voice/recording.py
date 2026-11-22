@@ -55,7 +55,8 @@ class LocalRecordingStore:
         target.write_bytes(data)
         return rel
 
-    def _resolve(self, path: str) -> Path:
+    def resolve(self, path: str) -> Path:
+        """Absolute file path for a stored recording; refuses anything outside the root."""
         root = self._root.resolve()
         full = (root / path).resolve()
         if not full.is_relative_to(root):
@@ -63,10 +64,10 @@ class LocalRecordingStore:
         return full
 
     def open(self, path: str) -> BinaryIO:
-        return self._resolve(path).open("rb")
+        return self.resolve(path).open("rb")
 
     def delete(self, path: str) -> bool:
-        full = self._resolve(path)
+        full = self.resolve(path)
         if not full.exists():
             return False
         full.unlink()

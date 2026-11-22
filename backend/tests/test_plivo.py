@@ -14,6 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from carwash_voice.config import Settings
 from carwash_voice.db.models import Call
 from carwash_voice.main import create_app
+from carwash_voice.transports.plivo.dialer import DialError, PlivoDialer
 from carwash_voice.transports.plivo.endpoint import e164, parse_extra_headers, ws_url
 from tests.fakes import EchoProvider
 
@@ -203,3 +204,98 @@ def test_secret_is_never_accepted_when_unset(client: TestClient) -> None:
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws/plivo/") as ws:
             ws.receive()
+
+
+# --- outbound dialling -------------------------------------------------------------------------
+
+
+class FakeDialer:
+    def __init__(self, error: str | None = None) -> None:
+        self.calls: list[tuple[int, str]] = []
+        self._error = error
+
+    async def dial(self, job_id: int, to_number: str) -> str:
+        if self._error:
+            raise DialError(self._error)
+        self.calls.append((job_id, to_number))
+        return "req-1"
+
+
+def make_job(c: TestClient) -> int:
+    from carwash_voice.domain import customers, outbound
+
+    with c.app.state.session_factory() as s:
+        cust = customers.upsert_customer(s, name="Ravi", phone="9845012345")
+        return outbound.create_job(s, "Your car is ready", customer_id=cust.id).id
+
+
+def job_status(c: TestClient, job_id: int) -> str:
+    return c.get("/api/outbound-jobs", headers={"X-Admin-Key": "test-admin"}).json()[0]["status"]
+
+
+def test_dial_endpoint_places_call_and_marks_dialling(plivo_settings: Settings) -> None:
+    dialer = FakeDialer()
+    with TestClient(create_app(plivo_settings, EchoProvider(), dialer)) as c:
+        job_id = make_job(c)
+        r = c.post(f"/api/outbound-jobs/{job_id}/dial", headers={"X-Admin-Key": "test-admin"})
+        assert r.status_code == 200 and r.json()["status"] == "dialling"
+        assert dialer.calls == [(job_id, "+919845012345")]
+        again = c.post(f"/api/outbound-jobs/{job_id}/dial", headers={"X-Admin-Key": "test-admin"})
+        assert again.status_code == 409
+
+
+def test_dial_failure_marks_job_failed(plivo_settings: Settings) -> None:
+    with TestClient(create_app(plivo_settings, EchoProvider(), FakeDialer("Plivo said no"))) as c:
+        job_id = make_job(c)
+        r = c.post(f"/api/outbound-jobs/{job_id}/dial", headers={"X-Admin-Key": "test-admin"})
+        assert r.status_code == 502 and "Plivo said no" in r.json()["detail"]
+        assert job_status(c, job_id) == "failed"
+
+
+def test_dial_unknown_job_and_auth(plivo_settings: Settings) -> None:
+    with TestClient(create_app(plivo_settings, EchoProvider(), FakeDialer())) as c:
+        assert c.post("/api/outbound-jobs/999/dial").status_code == 401
+        r = c.post("/api/outbound-jobs/999/dial", headers={"X-Admin-Key": "test-admin"})
+        assert r.status_code == 404
+
+
+def signed_hangup(client: TestClient, form: dict[str, str], job_id: int):
+    query = f"job_id={job_id}"
+    url = f"{BASE}/plivo/hangup?{query}"
+    sig = get_signature_v3(
+        TOKEN.encode(), construct_post_url(url, dict(form)).decode(), b"n"
+    ).decode()
+    return client.post(
+        f"/plivo/hangup?{query}",
+        content=urlencode(form),
+        headers={
+            "X-Plivo-Signature-V3": sig,
+            "X-Plivo-Signature-V3-Nonce": "n",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+
+
+def test_hangup_webhook_marks_unanswered_calls(plivo_settings: Settings) -> None:
+    with TestClient(create_app(plivo_settings, EchoProvider(), FakeDialer())) as c:
+        job_id = make_job(c)
+        c.post(f"/api/outbound-jobs/{job_id}/dial", headers={"X-Admin-Key": "test-admin"})
+        r = signed_hangup(c, {"CallStatus": "no-answer", "HangupCauseName": "No Answer"}, job_id)
+        assert r.status_code == 204 and job_status(c, job_id) == "no_answer"
+
+
+def test_hangup_webhook_ignores_answered_and_bad_signature(plivo_settings: Settings) -> None:
+    with TestClient(create_app(plivo_settings, EchoProvider(), FakeDialer())) as c:
+        job_id = make_job(c)
+        c.post(f"/api/outbound-jobs/{job_id}/dial", headers={"X-Admin-Key": "test-admin"})
+        assert signed_hangup(c, {"CallStatus": "completed"}, job_id).status_code == 204
+        assert job_status(c, job_id) == "dialling"
+        assert (
+            c.post(f"/plivo/hangup?job_id={job_id}", data={"CallStatus": "failed"}).status_code
+            == 403
+        )
+
+
+async def test_plivo_dialer_requires_config(settings: Settings) -> None:
+    with pytest.raises(DialError, match="not configured"):
+        await PlivoDialer(settings).dial(1, "+919845012345")

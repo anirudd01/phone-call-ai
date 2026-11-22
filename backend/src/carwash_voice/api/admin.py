@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
 from carwash_voice.api import schemas
-from carwash_voice.api.deps import SessionDep, require_admin, require_bridge
+from carwash_voice.api.deps import SessionDep, SettingsDep, require_admin, require_bridge
 from carwash_voice.db.models import Actor, JobStatus, TicketStatus
 from carwash_voice.domain import calls, customers, outbound, tickets
 from carwash_voice.domain.errors import InvalidInputError, NotFoundError
+from carwash_voice.transports.plivo.dialer import DialError
+from carwash_voice.voice.recording import LocalRecordingStore
 
 router = APIRouter(prefix="/api", tags=["admin"], dependencies=[Depends(require_admin)])
 bridge_router = APIRouter(
@@ -94,14 +94,20 @@ def get_call(call_id: str, session: SessionDep):
 
 
 @router.get("/calls/{call_id}/audio")
-def get_call_audio(call_id: str, session: SessionDep):
+def get_call_audio(call_id: str, session: SessionDep, settings: SettingsDep):
     try:
         call = calls.get_call(session, call_id)
     except NotFoundError as exc:
         raise _missing(exc) from exc
-    if not call.audio_path or not Path(call.audio_path).is_file():
+    file = None
+    if call.audio_path:
+        try:
+            file = LocalRecordingStore(settings.recordings_dir).resolve(call.audio_path)
+        except ValueError:
+            file = None
+    if file is None or not file.is_file():
         raise HTTPException(status_code=404, detail="No audio stored for this call")
-    return FileResponse(call.audio_path, media_type="audio/wav", filename=f"{call_id}.wav")
+    return FileResponse(file, media_type="audio/wav", filename=f"{call_id}.wav")
 
 
 # --- outbound jobs (admin) ---------------------------------------------------
@@ -126,6 +132,24 @@ def create_outbound_job(body: schemas.OutboundJobIn, session: SessionDep):
 @router.get("/outbound-jobs", response_model=list[schemas.OutboundJobOut])
 def list_outbound_jobs(session: SessionDep, status: JobStatus | None = None, limit: int = 100):
     return outbound.list_jobs(session, status=status, limit=limit)
+
+
+@router.post("/outbound-jobs/{job_id}/dial", response_model=schemas.OutboundJobOut)
+async def dial_outbound_job(job_id: int, request: Request, session: SessionDep):
+    """Place the phone call for a queued job through the phone provider (Plivo)."""
+    try:
+        job = outbound.get_job(session, job_id)
+    except NotFoundError as exc:
+        raise _missing(exc) from exc
+    if job.status != JobStatus.QUEUED:
+        raise HTTPException(status_code=409, detail=f"Job is {job.status.value}, not queued")
+    outbound.set_job_status(session, job_id, JobStatus.DIALLING)
+    try:
+        await request.app.state.dialer.dial(job_id, job.phone)
+    except DialError as exc:
+        job = outbound.set_job_status(session, job_id, JobStatus.FAILED, str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return outbound.get_job(session, job_id)
 
 
 # --- outbound jobs (bridge) --------------------------------------------------

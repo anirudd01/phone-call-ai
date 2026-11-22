@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from carwash_voice.config import Settings
 from carwash_voice.domain import calls, customers, tickets
 from carwash_voice.main import create_app
+from carwash_voice.voice.recording import LocalRecordingStore
 from tests.conftest import ADMIN, BRIDGE
 
 
@@ -62,11 +63,12 @@ def test_get_customer(client: TestClient, session: Session) -> None:
     assert client.get("/api/customers/999", headers=ADMIN).status_code == 404
 
 
-def test_calls_and_audio(client: TestClient, session: Session, tmp_path: Path) -> None:
+def test_calls_and_audio(
+    client: TestClient, session: Session, settings: Settings, tmp_path: Path
+) -> None:
     cid = "22222222-2222-4222-8222-222222222222"
     calls.create_call(session, cid, "inbound", "+919845012345")
-    wav = tmp_path / "x.wav"
-    wav.write_bytes(b"RIFFfake")
+    rel = LocalRecordingStore(settings.recordings_dir).save(cid, b"RIFFfake")
     calls.finalize_call(
         session, cid, "operator_hangup", transcript=[{"role": "user", "text": "hi", "ts": 1}]
     )
@@ -76,9 +78,11 @@ def test_calls_and_audio(client: TestClient, session: Session, tmp_path: Path) -
     assert client.get("/api/calls/nope", headers=ADMIN).status_code == 404
 
     assert client.get(f"/api/calls/{cid}/audio", headers=ADMIN).status_code == 404  # none yet
-    calls.finalize_call(session, cid, "x", audio_path=str(wav))
+    calls.finalize_call(session, cid, "x", audio_path=rel)
     r = client.get(f"/api/calls/{cid}/audio", headers=ADMIN)
     assert r.status_code == 200 and r.content == b"RIFFfake"
+    calls.finalize_call(session, cid, "x", audio_path="../../outside.wav")
+    assert client.get(f"/api/calls/{cid}/audio", headers=ADMIN).status_code == 404
 
 
 def test_outbound_jobs_admin_and_bridge(client: TestClient, session: Session) -> None:

@@ -13,13 +13,21 @@ from carwash_voice.config import Settings, get_settings
 from carwash_voice.db.migrate import run_migrations
 from carwash_voice.db.session import make_engine, make_session_factory
 from carwash_voice.logging import setup_logging
+from carwash_voice.transports.plivo.dialer import Dialer, PlivoDialer
 from carwash_voice.transports.plivo.endpoint import router as plivo_router
 from carwash_voice.voice.providers.base import VoiceProvider
 from carwash_voice.voice.providers.openai_realtime import OpenAIRealtimeProvider
 
 
-def create_app(settings: Settings | None = None, provider: VoiceProvider | None = None) -> FastAPI:
-    """Build the app. `provider` is the AI provider; tests pass a fake one."""
+def create_app(
+    settings: Settings | None = None,
+    provider: VoiceProvider | None = None,
+    dialer: Dialer | None = None,
+) -> FastAPI:
+    """Build the app. `provider` is the AI provider and `dialer` places outbound calls.
+
+    Tests pass fakes for both.
+    """
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -40,6 +48,7 @@ def create_app(settings: Settings | None = None, provider: VoiceProvider | None 
     app = FastAPI(title="Car wash voice agent", lifespan=lifespan)
     app.state.settings = settings
     app.state.provider = provider
+    app.state.dialer = dialer or PlivoDialer(settings)
     app.include_router(health.router)
     app.include_router(admin.router)
     app.include_router(admin.bridge_router)

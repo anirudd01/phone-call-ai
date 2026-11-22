@@ -18,8 +18,12 @@ from fastapi import APIRouter, Request, Response, WebSocket
 from loguru import logger
 from pipecat.serializers.plivo import PlivoFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
+from sqlalchemy.orm import Session
 
 from carwash_voice.config import Settings
+from carwash_voice.db.models import JobStatus
+from carwash_voice.db.session import run_db
+from carwash_voice.domain import outbound
 from carwash_voice.transports.plivo.signature import verify_signature
 from carwash_voice.voice.session import CallContext, CallHandle, CallResources, run_call
 
@@ -105,6 +109,48 @@ async def answer(request: Request) -> Response:
         extra["job_id"] = job_id
     logger.info("Plivo answer: {} call, call {}", direction, form.get("CallUUID", "?"))
     return Response(content=stream_xml(settings, extra), media_type="application/xml")
+
+
+UNANSWERED = {
+    "no-answer": JobStatus.NO_ANSWER,
+    "busy": JobStatus.NO_ANSWER,
+    "timeout": JobStatus.NO_ANSWER,
+    "cancel": JobStatus.NO_ANSWER,
+    "failed": JobStatus.FAILED,
+}
+
+
+@router.post("/plivo/hangup")
+async def hangup(request: Request) -> Response:
+    """Plivo's end-of-call webhook for outbound calls: record calls nobody answered."""
+    settings: Settings = request.app.state.settings
+    if not settings.plivo_enabled:
+        return Response(status_code=503, content="Plivo is not configured")
+    form = {k: str(v) for k, v in (await request.form()).items()}
+    ok = verify_signature(
+        "POST",
+        public_url(settings, request.url.path, request.url.query),
+        request.headers.get("x-plivo-signature-v3-nonce", ""),
+        request.headers.get("x-plivo-signature-v3", ""),
+        settings.plivo_auth_token,
+        form,
+    )
+    if not ok:
+        return Response(status_code=403, content="bad signature")
+    job_id = request.query_params.get("job_id", "")
+    status = UNANSWERED.get(form.get("CallStatus", "").lower())
+    if job_id.isdigit() and status is not None:
+        cause = form.get("HangupCauseName") or form.get("CallStatus", "")
+        await run_db(
+            request.app.state.session_factory, _mark_unanswered, int(job_id), status, cause
+        )
+    return Response(status_code=204)
+
+
+def _mark_unanswered(session: Session, job_id: int, status: JobStatus, cause: str) -> None:
+    job = outbound.get_job(session, job_id)
+    if job.status == JobStatus.DIALLING:  # an answered call finishes through the agent instead
+        outbound.set_job_status(session, job_id, status, f"Plivo: {cause}")
 
 
 async def _close(ws: WebSocket, code: int) -> None:

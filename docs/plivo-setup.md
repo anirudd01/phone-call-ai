@@ -25,4 +25,4 @@ been tried against real Plivo yet.
 
 - The agent hangs up by the Plivo serializer calling Plivo's hang-up API when the call ends.
 - The media format is 8 kHz mu-law, which is what Pipecat's Plivo serializer sends.
-- Outbound calls: still to do (task 9). The answer URL already understands `?job_id=<id>`.
+- Outbound: create a job with `POST /api/outbound-jobs`, then call `POST /api/outbound-jobs/{id}/dial` (header `X-Admin-Key`). Plivo dials the customer from `PLIVO_NUMBER`; unanswered calls are recorded by the hangup webhook (`/plivo/hangup`, set automatically per call).
