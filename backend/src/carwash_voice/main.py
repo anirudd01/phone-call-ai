@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from loguru import logger
 
-from carwash_voice.api import health
+from carwash_voice.api import admin, health
 from carwash_voice.config import Settings, get_settings
 from carwash_voice.db.migrate import run_migrations
 from carwash_voice.db.session import make_engine, make_session_factory
@@ -34,6 +34,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Car wash voice agent", lifespan=lifespan)
     app.state.settings = settings
     app.include_router(health.router)
+    app.include_router(admin.router)
+    app.include_router(admin.bridge_router)
     return app
 
 

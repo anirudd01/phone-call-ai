@@ -62,7 +62,7 @@ Working rules:
 | 0 | Bluetooth bridge feasibility test (scripts + user run) | BLOCKED (scripts done; waiting for user to run on spare laptop) | Work (write) → **Spare** (run) | Yes (hardware) |
 | 1 | Repo scaffolding and tooling (user has set up git) | DONE (committed locally on `feature/scaffold`; not pushed) | Work | Approve commit |
 | 2 | Backend skeleton: config, logging, health, DB models, migrations | DONE | Work | No |
-| 3 | Ticket/customer domain + admin REST API | TODO | Work | No |
+| 3 | Ticket/customer domain + admin REST API | DONE | Work | No |
 | 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | TODO | Work | No |
 | 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | TODO | Work | API key |
 | 6 | Recording: audio + transcript storage | TODO | Work | No |
@@ -364,23 +364,23 @@ Result: `uv run uvicorn carwash_voice.main:app` starts on Windows; `/healthz` re
 
 ---
 
-### Task 3: Domain services + admin REST API — `TODO`
+### Task 3: Domain services + admin REST API — `DONE`
 
-- [ ] Domain services for customers, tickets (with `public_ref` generation that is
+- [x] Domain services for customers, tickets (with `public_ref` generation that is
       unique, short and easy to say), ticket events, calls, outbound jobs.
-- [ ] Phone numbers normalised to E.164 with India as default region (use the
+- [x] Phone numbers normalised to E.164 with India as default region (use the
       `phonenumbers` library).
-- [ ] Admin REST under `/api`, protected by header `X-Admin-Key`:
+- [x] Admin REST under `/api`, protected by header `X-Admin-Key`:
       list/get/update tickets (status changes write a `ticket_events` row), list
       tickets with `status=callback_requested`, get customer, list calls with transcript,
       download a call's audio, create/list outbound jobs.
-- [ ] Bridge-facing `GET /api/bridge/outbound-jobs/next` and
+- [x] Bridge-facing `GET /api/bridge/outbound-jobs/next` and
       `POST /api/bridge/outbound-jobs/{id}/status`, protected by the bridge token.
-- [ ] Tests for every service function and endpoint (SQLite in a temp dir).
+- [x] Tests for every service function and endpoint (SQLite in a temp dir).
 
 Acceptance: tests pass; OpenAPI docs at `/docs` show all endpoints.
 
-Result: _(fill in)_
+Result: services in `domain/` (customers, tickets, calls, outbound, phone, errors); admin API in `api/admin.py` (admin key) and bridge endpoints (bearer token); 41 tests pass, ruff clean, `/docs` lists every endpoint. Ticket refs are `CW-` plus 5 digits (accepts spoken forms like `cw 24871`). Missing admin key or bridge token on the server gives 503, wrong or missing credentials 401. Outbound job completion also writes a note on the ticket. Bridge `next` endpoint returns 204 when the queue is empty and does not change the job status; the bridge then posts `dialling`.
 
 ---
 
@@ -595,7 +595,7 @@ Result: _(fill in)_
 | 2026-11-22 | Third-party Android apps can't capture SIM call audio (needs privileged `CAPTURE_AUDIO_OUTPUT`); no public API to inject audio into a call. Root-free SIM-to-SIP apps were not found. | Android developer docs; gsm2sip README (needs root). |
 | 2026-11-22 | Windows exposes Bluetooth HFP as a "Hands-Free" input/output endpoint pair that apps can open; not yet proven for capturing the remote side of a phone call. | Microsoft Bluetooth classic audio docs. Task 0 verifies. |
 | 2026-11-22 | Work laptop: Python 3.12.10 via `py -3.12`; `uv` was missing, installed with `py -3.12 -m pip install --user uv` (uv 0.13.9, Scripts folder not on PATH, so run `py -3.12 -m uv ...`). Ruff 0.17.6. Pipecat/OpenAI/FastAPI versions not pinned yet (task 2 onward). | Ran the commands. |
-| 2026-11-22 | Pinned in `backend/uv.lock`: FastAPI 0.165.0, SQLAlchemy 2.1.9, Alembic 1.20.1, loguru 0.8.0, pydantic-settings 2.16.3, psycopg 3.3.9, httpx 0.28.1 (tests). Starlette warns that `httpx` in TestClient is deprecated in favour of `httpx2`; harmless for now. | `uv.lock`, test run. |
+| 2026-11-22 | `phonenumbers` 9.0.44 added for E.164 (India default). Pinned in `backend/uv.lock`: FastAPI 0.165.0, SQLAlchemy 2.1.9, Alembic 1.20.1, loguru 0.8.0, pydantic-settings 2.16.3, psycopg 3.3.9, httpx 0.28.1 (tests). Starlette warns that `httpx` in TestClient is deprecated in favour of `httpx2`; harmless for now. | `uv.lock`, test run. |
 | | Pinned versions (Pipecat, OpenAI model) | |
 | | Pipecat class names actually used | |
 
