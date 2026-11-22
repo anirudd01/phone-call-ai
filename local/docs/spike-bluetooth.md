@@ -25,18 +25,24 @@ Run everything on the **spare laptop**, natively on Windows (not Docker, not WSL
    - Before the call: `uv run python list_devices.py`. Save the output.
    - During the call: `uv run python list_devices.py --name "<your phone name>"`.
      Note which devices appear only during the call (look for `<<<` marks).
-   - Record the caller: `uv run python record_call.py --device "Hands-Free" --seconds 15 --out caller.wav`
+   - Record the caller: `uv run python record_call.py --device "<phone name, e.g. Nord 6>" --seconds 15 --out caller.wav`
      (ask the caller to talk). Play `caller.wav` on the laptop and listen.
-   - Play into the call: `uv run python play_into_call.py --device "Hands-Free"`
+   - Play into the call: `uv run python play_into_call.py --device "<phone name, e.g. Nord 6>"`
      (three rising beeps; the caller should hear them). You can add `--wav prompt.wav`
      for a spoken clip (16-bit PCM WAV).
-   - Loopback: `uv run python loopback_test.py --in-device "Hands-Free" --out-device "Hands-Free"`
+   - Loopback: `uv run python loopback_test.py --in-device "<phone name>" --out-device "<phone name>"`
      (the caller says something, then hears it back).
    - If the device name differs on your machine, use a different part of the name from
      `list_devices.py` (for example the phone's name).
 6. **Fill in the result table** below (or send me the numbers and I will).
 
 ### Things to watch for
+
+- **Use the phone's name, not just "Hands-Free".** Other Bluetooth devices (earbuds, a
+  headset) also have "Hands-Free" entries, and the script may pick those. The phone's
+  entries look like `Hands-Free HF Audio (<phone name>)`. On the first test the phone
+  showed up only under the Windows WDM-KS host API at 8000 Hz, mono.
+- **Error 0x48F / "Error starting stream"** means the chosen device is not connected.
 
 - **Mic must be open first?** If the call audio only appears while some app holds the
   hands-free microphone open, say so. The bridge would then need to open the mic first to

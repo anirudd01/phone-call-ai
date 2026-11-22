@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import wave
 from pathlib import Path
 
@@ -9,6 +10,19 @@ import numpy as np
 import sounddevice as sd
 
 HIGHLIGHT = ("hands-free", "hands free", "ag audio", "handsfree")
+
+
+def clean_name(name: str) -> str:
+    """Make Windows' Bluetooth device names readable and single-line.
+
+    Windows gives names like "Input (@System32...bthhfenum.sys,#4;%1 Hands-Free HF Audio%0",
+    then a line break, then ";(OnePlus Nord 6))". This turns that into
+    "Input: Hands-Free HF Audio (OnePlus Nord 6)".
+    """
+    m = re.match(r"(\w+) \(@[^;]*;%1 (.*?)%0\s*;\((.*)\)\)$", name, flags=re.S)
+    if m:
+        return f"{m.group(1)}: {m.group(2).strip()} ({m.group(3).strip()})"
+    return " ".join(name.split())
 
 
 def find_device(substr: str, kind: str) -> int:
@@ -22,7 +36,7 @@ def find_device(substr: str, kind: str) -> int:
     matches = [
         (i, d)
         for i, d in enumerate(sd.query_devices())
-        if substr.lower() in d["name"].lower() and d[key] > 0
+        if substr.lower() in clean_name(d["name"]).lower() and d[key] > 0
     ]
     if not matches:
         raise SystemExit(f"No {kind} device with '{substr}' in its name. Run list_devices.py.")
@@ -32,8 +46,13 @@ def find_device(substr: str, kind: str) -> int:
 
     matches.sort(key=rank)
     index, dev = matches[0]
+    distinct = {clean_name(d["name"]) for _, d in matches}
+    if len(distinct) > 1:
+        print(f"WARNING: '{substr}' matches several devices; using the first. Be more specific:")
+        for _, d in matches:
+            print(f"  - {clean_name(d['name'])}")
     print(
-        f"Using {kind} device #{index}: {dev['name']} "
+        f"Using {kind} device #{index}: {clean_name(dev['name'])} "
         f"[{hostapis[dev['hostapi']]['name']}] default rate {dev['default_samplerate']:.0f} Hz"
     )
     return index

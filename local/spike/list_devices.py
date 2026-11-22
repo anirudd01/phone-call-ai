@@ -12,7 +12,7 @@ import argparse
 
 import sounddevice as sd
 
-from _common import HIGHLIGHT
+from _common import HIGHLIGHT, clean_name
 
 
 def main() -> None:
@@ -28,10 +28,11 @@ def main() -> None:
     print(f"{'idx':>3}  {'host API':<22} {'in':>3} {'out':>3} {'rate':>6}  name")
     for i, d in enumerate(sd.query_devices()):
         api = hostapis[d["hostapi"]]["name"]
-        flag = "  <<<" if any(m in d["name"].lower() for m in marks) else ""
+        name = clean_name(d["name"])
+        flag = "  <<<" if any(m in name.lower() for m in marks) else ""
         print(
             f"{i:>3}  {api:<22} {d['max_input_channels']:>3} {d['max_output_channels']:>3} "
-            f"{d['default_samplerate']:>6.0f}  {d['name']}{flag}"
+            f"{d['default_samplerate']:>6.0f}  {name}{flag}"
         )
     print("\nPrefer entries whose host API is 'Windows WASAPI'.")
 
