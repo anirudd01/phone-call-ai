@@ -127,7 +127,7 @@ Working rules:
 | 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | TODO | Work, then **Spare** | Yes (testing) |
 | 9 | Outbound update calls via the Plivo API | CODE DONE (untested on real Plivo) | **Spare** | Yes (testing) |
 | 10 | Language check: English, Kannada, Hindi, Hinglish | TODO | Work (laptop mic) or **Spare** | Yes (listening) |
-| 11 | Railway deployment (Dockerfile, Postgres, volume) | TODO | Work (Docker test on **Spare**) | Yes (Railway account) |
+| 11 | Railway deployment (Dockerfile, Postgres, volume) | FILES DONE, deploy pending (user) | Work (Docker test on **Spare**) | Yes (Railway account) |
 | 12 | Railway ↔ phone end-to-end (re-scope: via CPaaS number) | TODO | **Spare** | Yes (testing) |
 | 13 | Hand-off pack for Opus review | TODO | Work | No |
 | — | Phase 1c (Android app) | PARKED | — | — |
@@ -611,7 +611,7 @@ Result: _(fill in)_
 
 ---
 
-### Task 11: Railway deployment — `TODO`
+### Task 11: Railway deployment — `FILES DONE`
 
 - [ ] `backend/Dockerfile` (multi-stage with uv, non-root user, listens on `$PORT`),
       `railway.json` (or `railway.toml`) with health check `/healthz`.
@@ -626,7 +626,13 @@ Result: _(fill in)_
 Acceptance: `/healthz` OK on the Railway URL; laptop-mode bridge on the work laptop holds
 a conversation with the Railway backend over `wss://`.
 
-Result: _(fill in)_
+Result so far: `backend/Dockerfile` (multi-stage uv, non-root, `$PORT`), `backend/railway.toml`,
+`backend/.dockerignore`, `docs/runbook-railway.md`. Verified: app starts with `APP_ENV=production`
+(local bridge route absent, Plivo 503 when unconfigured, `/healthz` OK). NOT verified: the Docker
+build (no Docker on the work laptop; try on the spare laptop), Postgres, the volume
+permissions (`RAILWAY_RUN_UID=0` if needed), Railway region names and price. The user must
+create the Railway project, Postgres and volume (paid resources: ask first), then set variables.
+
 
 ---
 
