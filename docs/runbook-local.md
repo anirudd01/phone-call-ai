@@ -14,14 +14,31 @@ Projects: `backend/`, `local/bridge/`, `local/spike/` (each has its own `pyproje
 
 ## Talk to the agent with a headset (laptop mode)
 
-Use a headset so the agent does not hear itself. Two PowerShell windows.
+Already set up on this laptop: `backend/.env` has the keys, and `local/bridge/.env` was created
+with the same bridge token and `IN_DEVICE=Plantronics`, `OUT_DEVICE=Plantronics`. Wear the
+headset (otherwise the agent hears itself), then use two PowerShell windows.
 
-1. Backend: in `backend/`, make sure `.env` has `OPENAI_API_KEY`, `OPENAI_REALTIME_MODEL` and
-   `BRIDGE_TOKEN`, then run `uv run uvicorn carwash_voice.main:app`.
-2. Bridge: in `local/bridge/`, copy `.env.example` to `.env`, set `BRIDGE_TOKEN` to the same
-   value as the backend, and set `IN_DEVICE` and `OUT_DEVICE` to part of your headset name
-   (run `uv run carwash-bridge devices` to see names), or leave them empty for the defaults.
-   Then run `uv run carwash-bridge run`.
-3. At the `>` prompt press `a` then Enter, skip the caller number, and talk. `e` ends the
-   call and `q` quits. Afterwards check the ticket at `http://localhost:8000/docs`
-   (use the `X-Admin-Key` header). The call's audio is under `backend/data/recordings/`.
+If `uv` is not found, put `py -3.12 -m` in front of every `uv` below.
+
+Window 1, the server (leave it running):
+
+    cd backend
+    uv run uvicorn carwash_voice.main:app
+
+Window 2, the bridge:
+
+    cd localridge
+    uv run carwash-bridge run
+
+At the `>` prompt type `a` and press Enter, press Enter again to skip the caller number, and
+talk. The agent speaks first. Type `e` to end the call and `q` to quit.
+
+Afterwards, see the call at http://localhost:8000/docs (click Authorize, paste `ADMIN_API_KEY`
+from `backend/.env`): `GET /api/calls` shows the transcript and the saved audio file.
+
+### Setting up on another laptop
+1. `cd localridge`, copy `.env.example` to `.env`.
+2. Set `BRIDGE_TOKEN` to the same value as `BRIDGE_TOKEN` in `backend/.env`.
+3. Run `uv run carwash-bridge devices`. It lists every device. Put a distinctive part of your
+   headset's name in `IN_DEVICE` and `OUT_DEVICE` (for example `Plantronics`), or leave both
+   empty to use the laptop's default microphone and speakers.
