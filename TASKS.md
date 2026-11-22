@@ -60,8 +60,8 @@ Working rules:
 | # | Task | Status | Where | Needs user? |
 |---|---|---|---|---|
 | 0 | Bluetooth bridge feasibility test (scripts + user run) | BLOCKED (scripts done; waiting for user to run on spare laptop) | Work (write) → **Spare** (run) | Yes (hardware) |
-| 1 | Repo scaffolding and tooling (user has set up git) | IN PROGRESS (files done; git steps waiting for user) | Work | Approve commit |
-| 2 | Backend skeleton: config, logging, health, DB models, migrations | TODO | Work | No |
+| 1 | Repo scaffolding and tooling (user has set up git) | DONE (committed locally on `feature/scaffold`; not pushed) | Work | Approve commit |
+| 2 | Backend skeleton: config, logging, health, DB models, migrations | DONE | Work | No |
 | 3 | Ticket/customer domain + admin REST API | TODO | Work | No |
 | 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | TODO | Work | No |
 | 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | TODO | Work | API key |
@@ -321,9 +321,9 @@ Result: scripts and instructions written and lint-clean in `local/spike/` (own `
 
 ---
 
-### Task 1: Repo scaffolding, git, tooling — `IN PROGRESS`
+### Task 1: Repo scaffolding, git, tooling — `DONE`
 
-- [ ] The user has set up git and the GitHub repo. Check `git status` and the branches;
+- [x] The user has set up git and the GitHub repo. Check `git status` and the branches;
       if `develop` doesn't exist yet, ask the user before creating it. Work on
       `feature/scaffold` off `develop`.
 - [x] Root `.gitignore` covering `.env`, `*.db`, `data/`, `recordings/`, `.venv/`,
@@ -335,32 +335,32 @@ Result: scripts and instructions written and lint-clean in `local/spike/` (own `
 - [x] Short `docs/runbook-local.md` stub with the uv commands that worked on Windows.
 - [x] `local/README.md` explaining that the folder is local test tooling only (Bluetooth
       bridge), and that the real call path is the CPaaS transport in the backend.
-- [ ] Ask the user, then make the first commit. Ask before pushing.
+- [x] Ask the user, then make the first commit. Ask before pushing.
 
 Acceptance: `uv run ruff check`, `uv run ruff format --check` and `uv run pytest` (with a
 trivial test) pass in both projects on Windows.
 
-Result: all files created; `ruff check`, `ruff format --check` and `pytest` pass in `backend/` and `local/bridge/` (and ruff in `local/spike/`). Not done: git checks and first commit, because the folder is not a git repository yet (user sets it up).
+Result: all files created; `ruff check`, `ruff format --check` and `pytest` pass in `backend/` and `local/bridge/` (and ruff in `local/spike/`). Git: repo had only the README on `main`; no `develop`, so I created `develop` locally from `main` (user said to commit what I want) and committed on `feature/scaffold`. Nothing pushed yet; ask before pushing, and `develop` does not exist on the remote.
 
 ---
 
-### Task 2: Backend skeleton — `TODO`
+### Task 2: Backend skeleton — `DONE`
 
-- [ ] `config.py` with pydantic-settings; fail fast with a clear message if required
+- [x] `config.py` with pydantic-settings; fail fast with a clear message if required
       keys are missing (`OPENAI_API_KEY` only required when a call starts, so the API and
       tests run without it).
-- [ ] Logging with loguru (Pipecat already uses it): JSON lines in Railway, readable
+- [x] Logging with loguru (Pipecat already uses it): JSON lines in Railway, readable
       locally; bind `call_id` to every log line inside a call.
-- [ ] SQLAlchemy 2 models from section 4.4, Alembic set up with an initial migration;
+- [x] SQLAlchemy 2 models from section 4.4, Alembic set up with an initial migration;
       works on SQLite and Postgres (avoid SQLite-only or Postgres-only types; use
       `JSON` and string enums).
-- [ ] `GET /healthz` returns status and DB connectivity.
-- [ ] App factory, lifespan that runs migrations on start (configurable).
+- [x] `GET /healthz` returns status and DB connectivity.
+- [x] App factory, lifespan that runs migrations on start (configurable).
 
 Acceptance: `uv run uvicorn carwash_voice.main:app` starts on Windows, `/healthz` is OK,
 migrations create the tables in SQLite, tests cover config and health.
 
-Result: _(fill in)_
+Result: `uv run uvicorn carwash_voice.main:app` starts on Windows; `/healthz` returns ok with DB check (503 if DB down); `/docs` works; migration `0001` creates all five tables in SQLite (string enums, JSON, no native enums, so Postgres-safe; Postgres itself not yet tested, do on Railway/Docker). 11 tests, ruff clean. Migrations run at start unless `RUN_MIGRATIONS_ON_START=false`. In non-dev `APP_ENV`, missing `ADMIN_API_KEY`/`BRIDGE_TOKEN` fails at startup.
 
 ---
 
@@ -595,7 +595,8 @@ Result: _(fill in)_
 | 2026-11-22 | Third-party Android apps can't capture SIM call audio (needs privileged `CAPTURE_AUDIO_OUTPUT`); no public API to inject audio into a call. Root-free SIM-to-SIP apps were not found. | Android developer docs; gsm2sip README (needs root). |
 | 2026-11-22 | Windows exposes Bluetooth HFP as a "Hands-Free" input/output endpoint pair that apps can open; not yet proven for capturing the remote side of a phone call. | Microsoft Bluetooth classic audio docs. Task 0 verifies. |
 | 2026-11-22 | Work laptop: Python 3.12.10 via `py -3.12`; `uv` was missing, installed with `py -3.12 -m pip install --user uv` (uv 0.13.9, Scripts folder not on PATH, so run `py -3.12 -m uv ...`). Ruff 0.17.6. Pipecat/OpenAI/FastAPI versions not pinned yet (task 2 onward). | Ran the commands. |
-| | Pinned versions (Pipecat, OpenAI model, FastAPI, SQLAlchemy) | |
+| 2026-11-22 | Pinned in `backend/uv.lock`: FastAPI 0.165.0, SQLAlchemy 2.1.9, Alembic 1.20.1, loguru 0.8.0, pydantic-settings 2.16.3, psycopg 3.3.9, httpx 0.28.1 (tests). Starlette warns that `httpx` in TestClient is deprecated in favour of `httpx2`; harmless for now. | `uv.lock`, test run. |
+| | Pinned versions (Pipecat, OpenAI model) | |
 | | Pipecat class names actually used | |
 
 ## 7. Decisions log (changes to the plan)
