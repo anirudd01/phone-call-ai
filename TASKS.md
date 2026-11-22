@@ -59,21 +59,21 @@ Working rules:
 
 | # | Task | Status | Where | Needs user? |
 |---|---|---|---|---|
-| 0 | Bluetooth bridge feasibility test (scripts + user run) | BLOCKED (scripts done; waiting for user to run on spare laptop) | Work (write) → **Spare** (run) | Yes (hardware) |
+| 0 | Bluetooth bridge feasibility test (scripts + user run) | PARKED (user chose CPaaS on 2026-11-22; phone kept dropping the Bluetooth link; may retry later) | Work (write) → **Spare** (run) | Yes (hardware) |
 | 1 | Repo scaffolding and tooling (user has set up git) | DONE (committed locally on `feature/scaffold`; not pushed) | Work | Approve commit |
 | 2 | Backend skeleton: config, logging, health, DB models, migrations | DONE | Work | No |
 | 3 | Ticket/customer domain + admin REST API | DONE | Work | No |
-| 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | TODO | Work | No |
+| 4 | Local-bridge WebSocket protocol + serializer + call session lifecycle | DONE | Work | No |
 | 5 | Voice agent: OpenAI Realtime pipeline, persona, tools | TODO | Work | API key |
 | 6 | Recording: audio + transcript storage | TODO | Work | No |
-| 7 | Bridge app in `local/` (Windows): audio devices, streaming, operator console | TODO | Work | No |
-| 8 | Local end-to-end: laptop-mic mode, then phone via Bluetooth | TODO | Work, then **Spare** | Yes (testing) |
-| 9 | Outbound update calls (manual dial) | TODO | **Spare** | Yes (testing) |
+| 7 | Bridge app in `local/` (Windows): laptop-mic mode first; Bluetooth device mode parked | TODO | Work | No |
+| 8 | Local end-to-end: laptop-mic mode (phone via Bluetooth parked) | TODO | Work, then **Spare** | Yes (testing) |
+| 9 | Outbound update calls (re-scope with CPaaS: provider API dials) | TODO | **Spare** | Yes (testing) |
 | 10 | Language check: English, Kannada, Hindi, Hinglish | TODO | Work (laptop mic) or **Spare** | Yes (listening) |
 | 11 | Railway deployment (Dockerfile, Postgres, volume) | TODO | Work (Docker test on **Spare**) | Yes (Railway account) |
-| 12 | Railway ↔ phone end-to-end | TODO | **Spare** | Yes (testing) |
+| 12 | Railway ↔ phone end-to-end (re-scope: via CPaaS number) | TODO | **Spare** | Yes (testing) |
 | 13 | Hand-off pack for Opus review | TODO | Work | No |
-| — | Phase 1c / phase 2 (outline only, do not start) | PARKED | — | — |
+| — | Phase 1c (Android app) | PARKED | — | — |
 
 ---
 
@@ -262,7 +262,7 @@ Bridge `.env.example` (in `local/bridge/`): `BACKEND_WS_URL`, `BACKEND_HTTP_URL`
 
 ## 5. Tasks
 
-### Task 0: Bluetooth bridge feasibility test — `BLOCKED` (needs user's hardware run)
+### Task 0: Bluetooth bridge feasibility test — `PARKED`
 
 **Goal:** prove that the spare Windows laptop can (a) hear the remote caller and (b) send
 audio the caller hears, during a real SIM call, using only Windows' own Bluetooth
@@ -384,30 +384,30 @@ Result: services in `domain/` (customers, tickets, calls, outbound, phone, error
 
 ---
 
-### Task 4: Local-bridge protocol, serializer, call session lifecycle — `TODO`
+### Task 4: Local-bridge protocol, serializer, call session lifecycle — `DONE`
 
-- [ ] `local/docs/bridge-protocol.md` from section 4.3.
-- [ ] In `transports/local/`: `LocalBridgeFrameSerializer` (Pipecat `FrameSerializer`
+- [x] `local/docs/bridge-protocol.md` from section 4.3.
+- [x] In `transports/local/`: `LocalBridgeFrameSerializer` (Pipecat `FrameSerializer`
       subclass): binary → input audio
       frames at 16 kHz mono; output audio frames → binary (resample to 16 kHz if the
       pipeline's output rate differs); interruption frame → `{"type":"clear"}`;
       end-of-call → `{"type":"end_call"}`. Verify frame class names in the pinned version.
-- [ ] `/ws/local-bridge` endpoint (in `transports/local/`): auth check, wait for `start`
+- [x] `/ws/local-bridge` endpoint (in `transports/local/`): auth check, wait for `start`
       (timeout 5 s), then hand over to the transport-neutral call session in
       `voice/session.py`, which creates the `calls` row, builds the pipeline, runs until
       `stop`, disconnect, `end_call` or `MAX_CALL_SECONDS`, and always finalises the call
       row. The local transport sends `ready` once the pipeline is running.
-- [ ] Route registration for `transports/local/` sits behind a setting
+- [x] Route registration for `transports/local/` sits behind a setting
       (`ENABLE_LOCAL_BRIDGE`, default true in dev) so it can be switched off on Railway
       once CPaaS is live.
-- [ ] Pipeline factory is injectable so tests can replace the AI provider with a fake
+- [x] Pipeline factory is injectable so tests can replace the AI provider with a fake
       that echoes audio or emits canned frames.
-- [ ] Tests: protocol happy path, bad token (4401), missing `start`, abrupt disconnect
+- [x] Tests: protocol happy path, bad token (4401), missing `start`, abrupt disconnect
       still finalises the call row; a test client streams a WAV fixture and receives audio.
 
 Acceptance: the fake-provider WebSocket tests pass without network access.
 
-Result: _(fill in)_
+Result: 55 tests pass offline (14 for the bridge: happy path with a generated 1 s WAV and audio echoed back, agent `end_call`, bad token, token in URL refused, missing or bad `start`, abrupt disconnect finalises the call, `MAX_CALL_SECONDS`, no provider, route off when disabled). `voice/session.py` (`run_call`, `CallHandle`, `CallContext`) is transport-neutral, so a CPaaS transport only needs to build a Pipecat transport and call it. Provider seam is `voice/providers/base.py` (`VoiceProvider.build`). Tests inject `tests/fakes.py` EchoProvider through `create_app(settings, provider)`. End reasons: stop reason, `remote_hangup` on drop, `max_duration`, agent reason. Not yet done: nothing; the real provider is task 5.
 
 ---
 
@@ -597,7 +597,9 @@ Result: _(fill in)_
 | 2026-11-22 | Work laptop: Python 3.12.10 via `py -3.12`; `uv` was missing, installed with `py -3.12 -m pip install --user uv` (uv 0.13.9, Scripts folder not on PATH, so run `py -3.12 -m uv ...`). Ruff 0.17.6. Pipecat/OpenAI/FastAPI versions not pinned yet (task 2 onward). | Ran the commands. |
 | 2026-11-22 | `phonenumbers` 9.0.44 added for E.164 (India default). Pinned in `backend/uv.lock`: FastAPI 0.165.0, SQLAlchemy 2.1.9, Alembic 1.20.1, loguru 0.8.0, pydantic-settings 2.16.3, psycopg 3.3.9, httpx 0.28.1 (tests). Starlette warns that `httpx` in TestClient is deprecated in favour of `httpx2`; harmless for now. | `uv.lock`, test run. |
 | | Pinned versions (Pipecat, OpenAI model) | |
-| | Pipecat class names actually used | |
+| 2026-11-22 | Pipecat **1.16.0** (`pipecat-ai[openai,websocket,silero]`). It needs `loguru<0.8`, so loguru is pinned `>=0.7.3,<0.8` (0.7.3 installed). `PipelineTask`/`PipelineRunner` are deprecated aliases: use `PipelineWorker` (`pipecat.pipeline.worker`) and `WorkerRunner` (`pipecat.workers.runner`, `add_workers()` then `run()`). | Read installed source; deprecation warnings. |
+| 2026-11-22 | Classes used: `FrameSerializer` (`serialize`/`deserialize`, `_resample_audio_in/out`, `_reset_audio_out`, params `audio_in/out_sample_rate`), `FastAPIWebsocketTransport` + `FastAPIWebsocketParams` (events `on_client_connected`, `on_client_disconnected`), frames `InputAudioRawFrame`, `OutputAudioRawFrame`, `InterruptionFrame`, `OutputTransportMessageFrame`, `OutputTransportMessageUrgentFrame`, `EndFrame`; `PipelineParams(audio_in_sample_rate, audio_out_sample_rate)`. Built-in `ExotelFrameSerializer` and `PlivoFrameSerializer` exist (8 kHz default), which helps the CPaaS move. OpenAI Realtime service is `pipecat.services.openai.realtime.llm.OpenAIRealtimeLLMService` (default model string in Pipecat is `gpt-realtime-2.1`: still to verify in OpenAI docs, task 5). | Read installed source. |
+| 2026-11-22 | Starlette test client: `ws.receive()` returns a close as a `websocket.close` message instead of raising; use that to assert close codes. | Test debugging. |
 
 ## 7. Decisions log (changes to the plan)
 
@@ -605,3 +607,4 @@ Result: _(fill in)_
 |---|---|---|---|
 | 2026-11-22 | Initial plan (section 3) | User answers to planning questions | User |
 | 2026-11-22 | No Windows Phone Link; Bluetooth bridge code in `local/` (+ `transports/local/`); spare laptop runs phone tests; user sets up git | User follow-up | User |
+| 2026-11-22 | **Switch to CPaaS for the phone path.** Bluetooth bridge (task 0) is parked: the OnePlus phone kept disconnecting from the spare laptop. What was learned: Windows did expose the phone as `Hands-Free HF Audio` input/output (WDM-KS, 8 kHz mono), so a retry later is plausible. Consequences: the provider (Exotel or Plivo) must be chosen by the user; the CPaaS transport moves from phase 2 into the main plan; `local/` keeps only laptop-mic mode for phone-free testing; tasks 7, 8, 9 and 12 are re-scoped when the CPaaS transport is built. Until the user picks a provider, tasks 4 to 6 are built transport-neutral. | User unable to keep the Bluetooth link up | User |
